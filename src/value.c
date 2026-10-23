@@ -484,20 +484,25 @@ out:
 
 /*** array ***/
 
+/* An array starts with a table of ARRAY_INLINE_SIZE entries, in the same
+   allocation as its json_array_t, right after it; a table it grows to is an
+   allocation of its own */
+#define ARRAY_INLINE_SIZE 8
+
+static JSON_INLINE json_t **array_inline_table(json_array_t *array) {
+    return (json_t **)(array + 1);
+}
+
 json_t *json_array(void) {
-    json_array_t *array = jsonp_malloc(sizeof(json_array_t));
+    json_array_t *array =
+        jsonp_malloc(sizeof(json_array_t) + ARRAY_INLINE_SIZE * sizeof(json_t *));
     if (!array)
         return NULL;
     json_init(&array->json, JSON_ARRAY);
 
     array->entries = 0;
-    array->size = 8;
-
-    array->table = jsonp_malloc(array->size * sizeof(json_t *));
-    if (!array->table) {
-        jsonp_free(array);
-        return NULL;
-    }
+    array->size = ARRAY_INLINE_SIZE;
+    array->table = array_inline_table(array);
 
     return &array->json;
 }
@@ -508,7 +513,8 @@ static void json_delete_array(json_array_t *array) {
     for (i = 0; i < array->entries; i++)
         json_decref(array->table[i]);
 
-    jsonp_free(array->table);
+    if (array->table != array_inline_table(array))
+        jsonp_free(array->table);
     jsonp_free(array);
 }
 
@@ -573,10 +579,17 @@ static json_t **json_array_grow(json_array_t *array, size_t amount) {
     old_table = array->table;
 
     new_size = max(array->size + amount, array->size * 2);
-    new_table = jsonp_realloc(old_table, array->size * sizeof(json_t *),
-                              new_size * sizeof(json_t *));
-    if (!new_table)
-        return NULL;
+    if (old_table == array_inline_table(array)) {
+        new_table = jsonp_malloc(new_size * sizeof(json_t *));
+        if (!new_table)
+            return NULL;
+        memcpy(new_table, old_table, array->size * sizeof(json_t *));
+    } else {
+        new_table = jsonp_realloc(old_table, array->size * sizeof(json_t *),
+                                  new_size * sizeof(json_t *));
+        if (!new_table)
+            return NULL;
+    }
 
     array->size = new_size;
     array->table = new_table;
