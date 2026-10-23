@@ -53,10 +53,6 @@ char *strbuffer_steal_value(strbuffer_t *strbuff) {
     return result;
 }
 
-int strbuffer_append_byte(strbuffer_t *strbuff, char byte) {
-    return strbuffer_append_bytes(strbuff, &byte, 1);
-}
-
 int strbuffer_append_bytes(strbuffer_t *strbuff, const char *data, size_t size) {
     if (size >= strbuff->size - strbuff->length) {
         size_t new_size;

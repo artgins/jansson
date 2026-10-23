@@ -223,8 +223,59 @@ static void stream_unget(stream_t *stream, int c) {
     assert(stream->buffer[stream->buffer_pos] == c);
 }
 
+typedef struct {
+    const char *data;
+    size_t len;
+    size_t pos;
+} buffer_data_t;
+
+typedef struct {
+    const char *data;
+    size_t pos;
+} string_data_t;
+
+static int buffer_get(void *data);
+static int string_get(void *data);
+
+/* What stream_get() and the source of json_loads() or json_loadb() do for a
+   byte of plain ASCII that is not a newline nor a NUL, when the stream holds
+   no byte of its own: the byte is read from the source here, and the stream
+   left as stream_get() leaves it (the byte in its buffer, for an unget; the
+   position and the column one more). Anything else goes to stream_get(). */
+static JSON_INLINE int stream_get_fast(stream_t *stream, json_error_t *error) {
+    if (stream->state == STREAM_STATE_OK && stream->buffer[stream->buffer_pos] == '\0') {
+        const char *data = NULL;
+        size_t *pos = NULL;
+
+        if (stream->get == string_get) {
+            string_data_t *sd = (string_data_t *)stream->data;
+            data = sd->data;
+            pos = &sd->pos;
+        } else if (stream->get == buffer_get) {
+            buffer_data_t *bd = (buffer_data_t *)stream->data;
+            if (bd->pos < bd->len) {
+                data = bd->data;
+                pos = &bd->pos;
+            }
+        }
+        if (data) {
+            unsigned char u = (unsigned char)data[*pos];
+            if (u != '\0' && u < 0x80 && u != '\n') {
+                (*pos)++;
+                stream->buffer[0] = (char)u;
+                stream->buffer[1] = '\0';
+                stream->buffer_pos = 1;
+                stream->position++;
+                stream->column++;
+                return u;
+            }
+        }
+    }
+    return stream_get(stream, error);
+}
+
 static int lex_get(lex_t *lex, json_error_t *error) {
-    return stream_get(&lex->stream, error);
+    return stream_get_fast(&lex->stream, error);
 }
 
 /* A failed save stops the lexer: the stream is put in the error state, so
@@ -242,7 +293,7 @@ static int lex_save(lex_t *lex, int c, json_error_t *error) {
 }
 
 static int lex_get_save(lex_t *lex, json_error_t *error) {
-    int c = stream_get(&lex->stream, error);
+    int c = stream_get_fast(&lex->stream, error);
     if (c != STREAM_STATE_EOF && c != STREAM_STATE_ERROR) {
         if (lex_save(lex, c, error))
             return STREAM_STATE_ERROR;
@@ -308,19 +359,6 @@ static int32_t decode_unicode_escape(const char *str) {
     return value;
 }
 
-typedef struct {
-    const char *data;
-    size_t len;
-    size_t pos;
-} buffer_data_t;
-
-typedef struct {
-    const char *data;
-    size_t pos;
-} string_data_t;
-
-static int buffer_get(void *data);
-static int string_get(void *data);
 
 /* What a source of json_loadb() or json_loads() has not handed the stream
    yet, when the stream has nothing of its own cached (the rest of a
