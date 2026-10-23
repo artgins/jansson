@@ -227,12 +227,26 @@ static int lex_get(lex_t *lex, json_error_t *error) {
     return stream_get(&lex->stream, error);
 }
 
-static void lex_save(lex_t *lex, int c) { strbuffer_append_byte(&lex->saved_text, c); }
+/* A failed save stops the lexer: the stream is put in the error state, so
+   every later read returns STREAM_STATE_ERROR, and the error is out of
+   memory. Before, the failure was ignored: the saved text lost a byte, and
+   lex_scan_string() decoded past the end of its buffer, a heap overflow
+   (a string token longer than the largest block the allocator gives). */
+static int lex_save(lex_t *lex, int c, json_error_t *error) {
+    if (strbuffer_append_byte(&lex->saved_text, c)) {
+        lex->stream.state = STREAM_STATE_ERROR;
+        error_set(error, lex, json_error_out_of_memory, "not enough memory");
+        return -1;
+    }
+    return 0;
+}
 
 static int lex_get_save(lex_t *lex, json_error_t *error) {
     int c = stream_get(&lex->stream, error);
-    if (c != STREAM_STATE_EOF && c != STREAM_STATE_ERROR)
-        lex_save(lex, c);
+    if (c != STREAM_STATE_EOF && c != STREAM_STATE_ERROR) {
+        if (lex_save(lex, c, error))
+            return STREAM_STATE_ERROR;
+    }
     return c;
 }
 
@@ -256,9 +270,10 @@ static void lex_unget_unsave(lex_t *lex, int c) {
     }
 }
 
-static void lex_save_cached(lex_t *lex) {
+static void lex_save_cached(lex_t *lex, json_error_t *error) {
     while (lex->stream.buffer[lex->stream.buffer_pos] != '\0') {
-        lex_save(lex, lex->stream.buffer[lex->stream.buffer_pos]);
+        if (lex_save(lex, lex->stream.buffer[lex->stream.buffer_pos], error))
+            break;
         lex->stream.buffer_pos++;
         lex->stream.position++;
     }
@@ -291,6 +306,119 @@ static int32_t decode_unicode_escape(const char *str) {
     }
 
     return value;
+}
+
+typedef struct {
+    const char *data;
+    size_t len;
+    size_t pos;
+} buffer_data_t;
+
+typedef struct {
+    const char *data;
+    size_t pos;
+} string_data_t;
+
+static int buffer_get(void *data);
+static int string_get(void *data);
+
+/* What a source of json_loadb() or json_loads() has not handed the stream
+   yet, when the stream has nothing of its own cached (the rest of a
+   multi-byte character, a byte put back): its bytes, how many of them can
+   be read here (a string's end is its NUL, which no run takes), and where
+   its position is kept. NULL for any other source, or any other state. */
+static const char *stream_rest(stream_t *stream, size_t *available, size_t **pos) {
+    if (stream->state != STREAM_STATE_OK || stream->buffer[stream->buffer_pos] != '\0')
+        return NULL;
+
+    if (stream->get == buffer_get) {
+        buffer_data_t *bd = (buffer_data_t *)stream->data;
+        *available = bd->len - bd->pos;
+        *pos = &bd->pos;
+        return bd->data + bd->pos;
+    }
+    if (stream->get == string_get) {
+        string_data_t *sd = (string_data_t *)stream->data;
+        *available = (size_t)-1;
+        *pos = &sd->pos;
+        return sd->data + sd->pos;
+    }
+    return NULL;
+}
+
+/* The bytes a run takes: the plain ASCII of a string token (0x20..0x7F but
+   '"' and '\\'), or digits. None of them is a newline or a NUL. */
+#define RUN_STRING 0
+#define RUN_DIGITS 1
+
+/* Save the run of bytes of a kind that follows in the source, as
+   lex_get_save() would save them one by one: the same bytes, the same
+   position and column (a run has no newline). Only what fits in the saved
+   text as it is: it is never grown here, so that it grows where and as the
+   bytes saved one by one grow it (lex_get_save() of the byte that finds it
+   full), and a growth that fails, fails once, where it failed. Nothing is
+   done for a source other than json_loadb()'s and json_loads()'s, or when
+   the stream holds bytes of its own. */
+static void lex_save_run(lex_t *lex, int kind) {
+    stream_t *stream = &lex->stream;
+    strbuffer_t *sb = &lex->saved_text;
+    const char *rest;
+    size_t available, *pos, room, run = 0;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest)
+        return;
+
+    /* strbuffer_append_bytes() grows it when a byte leaves no room for the
+       NUL: until then, size - length - 1 bytes are saved in place */
+    if (sb->size - sb->length <= 1)
+        return;
+    room = sb->size - sb->length - 1;
+    if (available > room)
+        available = room;
+
+    if (kind == RUN_DIGITS) {
+        while (run < available && l_isdigit(rest[run]))
+            run++;
+    } else {
+        while (run < available) {
+            unsigned char u = (unsigned char)rest[run];
+            if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
+                break;
+            run++;
+        }
+    }
+    if (run == 0)
+        return;
+
+    memcpy(sb->value + sb->length, rest, run);
+    sb->length += run;
+    sb->value[sb->length] = '\0';
+
+    *pos += run;
+    stream->position += run;
+    stream->column += (int)run;
+}
+
+/* Skip the run of blanks (' ', '\t', '\r': not a newline) that follows in
+   the source, as lex_get() would read them one by one before a token: the
+   same position and column. Only for json_loadb()'s and json_loads()'s
+   sources, when the stream holds no bytes of its own. */
+static void lex_skip_blank_run(lex_t *lex) {
+    stream_t *stream = &lex->stream;
+    const char *rest;
+    size_t available, *pos, run = 0;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest)
+        return;
+    while (run < available &&
+           (rest[run] == ' ' || rest[run] == '\t' || rest[run] == '\r'))
+        run++;
+
+    *pos += run;
+    stream->position += run;
+    stream->column += (int)run;
 }
 
 static void lex_scan_string(lex_t *lex, json_error_t *error) {
@@ -344,8 +472,10 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
                 error_set(error, lex, json_error_invalid_syntax, "invalid escape");
                 goto out;
             }
-        } else
+        } else {
+            lex_save_run(lex, RUN_STRING);
             c = lex_get_save(lex, error);
+        }
     }
 
     /* the actual value is at most of the same length as the source
@@ -358,6 +488,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
     t = jsonp_malloc(lex->saved_text.length + 1);
     if (!t) {
         /* this is not very nice, since TOKEN_INVALID is returned */
+        error_set(error, lex, json_error_out_of_memory, "not enough memory");
         goto out;
     }
     lex->value.string.val = t;
@@ -485,13 +616,18 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
     } else if (l_isdigit(c)) {
-        do
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     } else {
         lex_unget_unsave(lex, c);
         goto out;
     }
+
+    if (c == STREAM_STATE_ERROR)
+        goto out;
 
     if (!(lex->flags & JSON_DECODE_INT_AS_REAL) && c != '.' && c != 'E' && c != 'e') {
         json_int_t intval;
@@ -524,11 +660,14 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             lex_unget(lex, c);
             goto out;
         }
-        lex_save(lex, c);
+        if (lex_save(lex, c, error))
+            goto out;
 
-        do
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     }
 
     if (c == 'E' || c == 'e') {
@@ -541,10 +680,15 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
 
-        do
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     }
+
+    if (c == STREAM_STATE_ERROR)
+        goto out;
 
     lex_unget_unsave(lex, c);
 
@@ -569,9 +713,11 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
     if (lex->token == TOKEN_STRING)
         lex_free_string(lex);
 
-    do
+    c = lex_get(lex, error);
+    while (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+        lex_skip_blank_run(lex);
         c = lex_get(lex, error);
-    while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+    }
 
     if (c == STREAM_STATE_EOF) {
         lex->token = TOKEN_EOF;
@@ -583,7 +729,10 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
         goto out;
     }
 
-    lex_save(lex, c);
+    if (lex_save(lex, c, error)) {
+        lex->token = TOKEN_INVALID;
+        goto out;
+    }
 
     if (c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == ',')
         lex->token = c;
@@ -603,6 +752,10 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
         do
             c = lex_get_save(lex, error);
         while (l_isalpha(c));
+        if (c == STREAM_STATE_ERROR) {
+            lex->token = TOKEN_INVALID;
+            goto out;
+        }
         lex_unget_unsave(lex, c);
 
         saved_text = strbuffer_value(&lex->saved_text);
@@ -620,7 +773,7 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
     else {
         /* save the rest of the input UTF-8 sequence to get an error
            message of valid UTF-8 */
-        lex_save_cached(lex);
+        lex_save_cached(lex, error);
         lex->token = TOKEN_INVALID;
     }
 
@@ -639,10 +792,13 @@ static char *lex_steal_string(lex_t *lex, size_t *out_len) {
     return result;
 }
 
-static int lex_init(lex_t *lex, get_func get, size_t flags, void *data) {
+static int lex_init(lex_t *lex, get_func get, size_t flags, void *data,
+                    json_error_t *error) {
     stream_init(&lex->stream, get, data);
-    if (strbuffer_init(&lex->saved_text))
+    if (strbuffer_init(&lex->saved_text)) {
+        error_set(error, NULL, json_error_out_of_memory, "not enough memory");
         return -1;
+    }
 
     lex->flags = flags;
     lex->token = TOKEN_INVALID;
@@ -661,8 +817,10 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error);
 
 static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
     json_t *object = json_object();
-    if (!object)
+    if (!object) {
+        error_set(error, lex, json_error_out_of_memory, "not enough memory");
         return NULL;
+    }
 
     lex_scan(lex, error);
     if (lex->token == '}')
@@ -712,6 +870,7 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
 
         if (json_object_setn_new_nocheck(object, key, len, value)) {
             jsonp_free(key);
+            error_set(error, lex, json_error_out_of_memory, "not enough memory");
             goto error;
         }
 
@@ -738,8 +897,10 @@ error:
 
 static json_t *parse_array(lex_t *lex, size_t flags, json_error_t *error) {
     json_t *array = json_array();
-    if (!array)
+    if (!array) {
+        error_set(error, lex, json_error_out_of_memory, "not enough memory");
         return NULL;
+    }
 
     lex_scan(lex, error);
     if (lex->token == ']')
@@ -751,6 +912,7 @@ static json_t *parse_array(lex_t *lex, size_t flags, json_error_t *error) {
             goto error;
 
         if (json_array_append_new(array, elem)) {
+            error_set(error, lex, json_error_out_of_memory, "not enough memory");
             goto error;
         }
 
@@ -840,8 +1002,11 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error) {
             return NULL;
     }
 
-    if (!json)
+    if (!json) {
+        /* a container sets its own error; a scalar fails only for memory */
+        error_set(error, lex, json_error_out_of_memory, "not enough memory");
         return NULL;
+    }
 
     lex->depth--;
     return json;
@@ -882,11 +1047,6 @@ static json_t *parse_json(lex_t *lex, size_t flags, json_error_t *error) {
     return result;
 }
 
-typedef struct {
-    const char *data;
-    size_t pos;
-} string_data_t;
-
 static int string_get(void *data) {
     char c;
     string_data_t *stream = (string_data_t *)data;
@@ -914,7 +1074,7 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     stream_data.data = string;
     stream_data.pos = 0;
 
-    if (lex_init(&lex, string_get, flags, (void *)&stream_data))
+    if (lex_init(&lex, string_get, flags, (void *)&stream_data, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);
@@ -922,12 +1082,6 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     lex_close(&lex);
     return result;
 }
-
-typedef struct {
-    const char *data;
-    size_t len;
-    size_t pos;
-} buffer_data_t;
 
 static int buffer_get(void *data) {
     char c;
@@ -956,7 +1110,7 @@ json_t *json_loadb(const char *buffer, size_t buflen, size_t flags, json_error_t
     stream_data.pos = 0;
     stream_data.len = buflen;
 
-    if (lex_init(&lex, buffer_get, flags, (void *)&stream_data))
+    if (lex_init(&lex, buffer_get, flags, (void *)&stream_data, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);
@@ -982,7 +1136,7 @@ json_t *json_loadf(FILE *input, size_t flags, json_error_t *error) {
         return NULL;
     }
 
-    if (lex_init(&lex, (get_func)fgetc, flags, input))
+    if (lex_init(&lex, (get_func)fgetc, flags, input, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);
@@ -1019,7 +1173,7 @@ json_t *json_loadfd(int input, size_t flags, json_error_t *error) {
         return NULL;
     }
 
-    if (lex_init(&lex, (get_func)fd_get_func, flags, &input))
+    if (lex_init(&lex, (get_func)fd_get_func, flags, &input, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);
@@ -1096,7 +1250,7 @@ json_t *json_load_callback(json_load_callback_t callback, void *arg, size_t flag
         return NULL;
     }
 
-    if (lex_init(&lex, (get_func)callback_get, flags, &stream_data))
+    if (lex_init(&lex, (get_func)callback_get, flags, &stream_data, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);

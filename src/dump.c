@@ -107,9 +107,15 @@ static int dump_string(const char *str, size_t len, json_dump_callback_t dump, v
         int length;
 
         while (end < lim) {
-            end = utf8_iterate(pos, lim - pos, &codepoint);
-            if (!end)
-                return -1;
+            if ((unsigned char)*pos < 0x80) {
+                /* ASCII: what utf8_iterate() answers for it */
+                codepoint = (unsigned char)*pos;
+                end = pos + 1;
+            } else {
+                end = utf8_iterate(pos, lim - pos, &codepoint);
+                if (!end)
+                    return -1;
+            }
 
             /* mandatory escape or control char */
             if (codepoint == '\\' || codepoint == '"' || codepoint < 0x20)

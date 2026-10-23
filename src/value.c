@@ -45,9 +45,35 @@ static JSON_INLINE void json_init(json_t *json, json_type type) {
     json->refcount = 1;
 }
 
+/* The key of a container in the table of its parents: what glibc's
+   snprintf(key, key_size, "%p", json) writes ("0x" and the hexadecimal
+   digits of the address, without leading zeros), without a printf. It is
+   made for every object and array dumped, deep-copied or compared. A buffer
+   too short for it, or a NULL json, still goes to snprintf(). */
+static size_t loop_key(char *key, size_t key_size, const json_t *json) {
+    static const char hex[] = "0123456789abcdef";
+    char digits[sizeof(uintptr_t) * 2];
+    uintptr_t value = (uintptr_t)json;
+    size_t n = 0;
+
+    while (value) {
+        digits[n++] = hex[value & 0xf];
+        value >>= 4;
+    }
+    if (n == 0 || n + 3 > key_size)
+        return snprintf(key, key_size, "%p", json);
+
+    key[0] = '0';
+    key[1] = 'x';
+    for (size_t i = 0; i < n; i++)
+        key[2 + i] = digits[n - 1 - i];
+    key[2 + n] = '\0';
+    return 2 + n;
+}
+
 int jsonp_loop_check(hashtable_t *parents, const json_t *json, char *key, size_t key_size,
                      size_t *key_len_out) {
-    size_t key_len = snprintf(key, key_size, "%p", json);
+    size_t key_len = loop_key(key, key_size, json);
 
     if (key_len_out)
         *key_len_out = key_len;
