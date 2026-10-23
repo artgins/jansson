@@ -238,13 +238,7 @@ typedef struct {
     size_t pos;
 } buffer_data_t;
 
-typedef struct {
-    const char *data;
-    size_t pos;
-} string_data_t;
-
 static int buffer_get(void *data);
-static int string_get(void *data);
 
 /* What stream_get() and the source of json_loads() or json_loadb() do for a
    byte of plain ASCII that is not a newline nor a NUL, when the stream holds
@@ -253,24 +247,15 @@ static int string_get(void *data);
    position and the column one more). Anything else goes to stream_get(). */
 static JSON_INLINE int stream_get_fast(stream_t *stream, json_error_t *error) {
     if (stream->state == STREAM_STATE_OK && stream->buffer[stream->buffer_pos] == '\0') {
-        const char *data = NULL;
-        size_t *pos = NULL;
-
-        if (stream->get == string_get) {
-            string_data_t *sd = (string_data_t *)stream->data;
-            data = sd->data;
-            pos = &sd->pos;
-        } else if (stream->get == buffer_get) {
+        if (stream->get == buffer_get) {
             buffer_data_t *bd = (buffer_data_t *)stream->data;
-            if (bd->pos < bd->len) {
-                data = bd->data;
-                pos = &bd->pos;
-            }
-        }
-        if (data) {
-            unsigned char u = (unsigned char)data[*pos];
+            unsigned char u;
+
+            if (bd->pos >= bd->len)
+                return stream_get(stream, error);
+            u = (unsigned char)bd->data[bd->pos];
             if (u != '\0' && u < 0x80 && u != '\n') {
-                (*pos)++;
+                bd->pos++;
                 stream->buffer[0] = (char)u;
                 stream->buffer[1] = '\0';
                 stream->buffer_pos = 1;
@@ -370,8 +355,8 @@ static int32_t decode_unicode_escape(const char *str) {
 /* What a source of json_loadb() or json_loads() has not handed the stream
    yet, when the stream has nothing of its own cached (the rest of a
    multi-byte character, a byte put back): its bytes, how many of them can
-   be read here (a string's end is its NUL, which no run takes), and where
-   its position is kept. NULL for any other source, or any other state. */
+   be read here, and where its position is kept. NULL for any other source,
+   or any other state. */
 static const char *stream_rest(stream_t *stream, size_t *available, size_t **pos) {
     if (stream->state != STREAM_STATE_OK || stream->buffer[stream->buffer_pos] != '\0')
         return NULL;
@@ -381,12 +366,6 @@ static const char *stream_rest(stream_t *stream, size_t *available, size_t **pos
         *available = bd->len - bd->pos;
         *pos = &bd->pos;
         return bd->data + bd->pos;
-    }
-    if (stream->get == string_get) {
-        string_data_t *sd = (string_data_t *)stream->data;
-        *available = (size_t)-1;
-        *pos = &sd->pos;
-        return sd->data + sd->pos;
     }
     return NULL;
 }
@@ -1122,22 +1101,10 @@ static json_t *parse_json(lex_t *lex, size_t flags, json_error_t *error) {
     return result;
 }
 
-static int string_get(void *data) {
-    char c;
-    string_data_t *stream = (string_data_t *)data;
-    c = stream->data[stream->pos];
-    if (c == '\0')
-        return EOF;
-    else {
-        stream->pos++;
-        return (unsigned char)c;
-    }
-}
-
 json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     lex_t lex;
     json_t *result;
-    string_data_t stream_data;
+    buffer_data_t stream_data;
 
     jsonp_error_init(error, "<string>");
 
@@ -1146,10 +1113,13 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
         return NULL;
     }
 
+    /* The string up to its NUL, read as a buffer of that length: the end of
+       the buffer is where the NUL ended the string */
     stream_data.data = string;
     stream_data.pos = 0;
+    stream_data.len = strlen(string);
 
-    if (lex_init(&lex, string_get, flags, (void *)&stream_data, error))
+    if (lex_init(&lex, buffer_get, flags, (void *)&stream_data, error))
         return NULL;
 
     result = parse_json(&lex, flags, error);
