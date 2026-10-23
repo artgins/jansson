@@ -308,6 +308,68 @@ static int32_t decode_unicode_escape(const char *str) {
     return value;
 }
 
+typedef struct {
+    const char *data;
+    size_t len;
+    size_t pos;
+} buffer_data_t;
+
+static int buffer_get(void *data);
+
+/* Save, from the buffer of json_loadb(), the run of plain ASCII that
+   follows in a string token: bytes 0x20..0x7F but '"' and '\\'. As
+   lex_get_save() would save them one by one: the same bytes, the same
+   position and column (no newline in such a run), the saved text grown to
+   the same size by the same doublings. Nothing is done when the source is
+   another one, when the stream holds the rest of a multi-byte character, or
+   when the growth fails: the bytes are then read one by one, and a failure
+   comes where it came. */
+static void lex_save_ascii_run(lex_t *lex) {
+    stream_t *stream = &lex->stream;
+    buffer_data_t *bd;
+    strbuffer_t *sb = &lex->saved_text;
+    size_t start, end, run, need;
+
+    if (stream->get != buffer_get || stream->state != STREAM_STATE_OK ||
+        stream->buffer[stream->buffer_pos] != '\0')
+        return;
+
+    bd = (buffer_data_t *)stream->data;
+    start = end = bd->pos;
+    while (end < bd->len) {
+        unsigned char u = (unsigned char)bd->data[end];
+        if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
+            break;
+        end++;
+    }
+    run = end - start;
+    if (run == 0)
+        return;
+
+    need = sb->length + run + 1;
+    if (need > sb->size) {
+        size_t new_size = sb->size;
+        char *new_value;
+        while (new_size < need) {
+            if (new_size > ((size_t)-1) / 2)
+                return;
+            new_size *= 2;
+        }
+        new_value = jsonp_realloc(sb->value, sb->size, new_size);
+        if (!new_value)
+            return;
+        sb->value = new_value;
+        sb->size = new_size;
+    }
+    memcpy(sb->value + sb->length, bd->data + start, run);
+    sb->length += run;
+    sb->value[sb->length] = '\0';
+
+    bd->pos = end;
+    stream->position += run;
+    stream->column += (int)run;
+}
+
 static void lex_scan_string(lex_t *lex, json_error_t *error) {
     int c;
     const char *p;
@@ -359,8 +421,10 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
                 error_set(error, lex, json_error_invalid_syntax, "invalid escape");
                 goto out;
             }
-        } else
+        } else {
+            lex_save_ascii_run(lex);
             c = lex_get_save(lex, error);
+        }
     }
 
     /* the actual value is at most of the same length as the source
@@ -964,12 +1028,6 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     lex_close(&lex);
     return result;
 }
-
-typedef struct {
-    const char *data;
-    size_t len;
-    size_t pos;
-} buffer_data_t;
 
 static int buffer_get(void *data) {
     char c;

@@ -141,7 +141,13 @@ int utf8_check_string(const char *string, size_t length) {
     size_t i;
 
     for (i = 0; i < length; i++) {
-        size_t count = utf8_check_first(string[i]);
+        size_t count;
+
+        /* ASCII: utf8_check_first() answers 1, nothing more to check */
+        if ((unsigned char)string[i] < 0x80)
+            continue;
+
+        count = utf8_check_first(string[i]);
         if (count == 0)
             return 0;
         else if (count > 1) {
