@@ -33,12 +33,19 @@ struct hashtable_bucket {
     struct hashtable_list *last;
 };
 
+/* A table of up to 2^HASHTABLE_INLINE_ORDER buckets keeps them in itself
+   (inline_buckets), instead of allocating them: a table that starts with
+   INITIAL_HASHTABLE_ORDER 3, the default, allocates its buckets only when
+   it grows past 8 of them */
+#define HASHTABLE_INLINE_ORDER 3
+
 typedef struct hashtable {
     size_t size;
     struct hashtable_bucket *buckets;
     size_t order; /* hashtable has pow(2, order) buckets */
     struct hashtable_list list;
     struct hashtable_list ordered_list;
+    struct hashtable_bucket inline_buckets[1 << HASHTABLE_INLINE_ORDER];
 } hashtable_t;
 
 #define hashtable_key_to_iter(key_)                                                      \
