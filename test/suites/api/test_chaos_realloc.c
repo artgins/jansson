@@ -12,8 +12,9 @@ static int chaos_fail = 0;
 #define CHAOS_MAX_FAILURE 200
 
 void *chaos_malloc(size_t size) {
-    if (chaos_pos == chaos_fail)
+    if (chaos_pos == chaos_fail) {
         return NULL;
+    }
 
     chaos_pos++;
 
@@ -55,21 +56,25 @@ int test_unpack() {
     json_error_t error;
     json_t *root = json_pack("{s:i, s:i, s:i, s:i}", "n1", 1, "n2", 2, "n3", 3, "n4", 4);
 
-    if (!root)
+    if (!root) {
         return -1;
+    }
 
-    if (!json_unpack_ex(root, &error, JSON_STRICT, "{s:i, s:i}", "n1", &v1, "n2", &v2))
+    if (!json_unpack_ex(root, &error, JSON_STRICT, "{s:i, s:i}", "n1", &v1, "n2", &v2)) {
         fail("Unexpected success");
+    }
 
     if (json_error_code(&error) != json_error_end_of_input_expected) {
-        if (json_error_code(&error) != json_error_out_of_memory)
+        if (json_error_code(&error) != json_error_out_of_memory) {
             fail("Unexpected error code");
+        }
 
         goto out;
     }
 
-    if (strcmp(error.text, "2 object item(s) left unpacked: n3, n4"))
+    if (strcmp(error.text, "2 object item(s) left unpacked: n3, n4")) {
         goto out;
+    }
 
     ret = 0;
 
@@ -85,8 +90,9 @@ int dump_chaos_callback(const char *buffer, size_t size, void *data) {
     (void)size;
     (void)data;
 
-    if (!obj)
+    if (!obj) {
         return -1;
+    }
 
     json_decref(obj);
 
@@ -108,8 +114,9 @@ static void test_chaos_realloc() {
     json_t *dumpobj = json_pack("{s:[iiis], s:s}", "key1", 1, 2, 3, "txt", "key2", "v2");
     int keyno;
 
-    if (!obj || !arr1 || !arr2 || !txt || !intnum || !dblnum || !dumpobj)
+    if (!obj || !arr1 || !arr2 || !txt || !intnum || !dblnum || !dumpobj) {
         fail("failed to allocate basic objects");
+    }
 
     json_get_alloc_funcs2(&orig_malloc, &orig_realloc, &orig_free);
     json_set_alloc_funcs2(chaos_malloc, chaos_realloc, chaos_free);

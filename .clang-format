@@ -3,3 +3,4 @@ AlignConsecutiveMacros: true
 ColumnLimit: 90
 IndentCaseLabels: true
 IndentWidth: 4
+InsertBraces: true

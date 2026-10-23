@@ -124,12 +124,15 @@ void jsonp_loop_leave(loop_path_t *path, const json_t *json);
 /* TRUE when none of the eight bytes of w is special in a JSON string: all
    of them are ASCII from 0x20 up, and none is '"' nor '\\' */
 static JSON_INLINE int jsonp_plain_ascii8(uint64_t w) {
-    if (w & BYTES8(0x80))
+    if (w & BYTES8(0x80)) {
         return 0;
-    if ((w - BYTES8(0x20)) & ~w & BYTES8(0x80)) /* a byte under 0x20 */
+    }
+    if ((w - BYTES8(0x20)) & ~w & BYTES8(0x80)) { /* a byte under 0x20 */
         return 0;
-    if (HAS_ZERO_BYTE(w ^ BYTES8('"')) || HAS_ZERO_BYTE(w ^ BYTES8('\\')))
+    }
+    if (HAS_ZERO_BYTE(w ^ BYTES8('"')) || HAS_ZERO_BYTE(w ^ BYTES8('\\'))) {
         return 0;
+    }
     return 1;
 }
 

@@ -48,8 +48,9 @@ static uint32_t buf_to_uint32(char *data) {
     size_t i;
     uint32_t result = 0;
 
-    for (i = 0; i < sizeof(uint32_t); i++)
+    for (i = 0; i < sizeof(uint32_t); i++) {
         result = (result << 8) | (unsigned char)data[i];
+    }
 
     return result;
 }
@@ -66,8 +67,9 @@ static int seed_from_urandom(uint32_t *seed) {
 #if defined(HAVE_OPEN) && defined(HAVE_CLOSE) && defined(HAVE_READ)
     int urandom;
     urandom = open("/dev/urandom", O_RDONLY);
-    if (urandom == -1)
+    if (urandom == -1) {
         return 1;
+    }
 
     ok = read(urandom, data, sizeof(uint32_t)) == sizeof(uint32_t);
     close(urandom);
@@ -75,15 +77,17 @@ static int seed_from_urandom(uint32_t *seed) {
     FILE *urandom;
 
     urandom = fopen("/dev/urandom", "rb");
-    if (!urandom)
+    if (!urandom) {
         return 1;
+    }
 
     ok = fread(data, 1, sizeof(uint32_t), urandom) == sizeof(uint32_t);
     fclose(urandom);
 #endif
 
-    if (!ok)
+    if (!ok) {
         return 1;
+    }
 
     *seed = buf_to_uint32(data);
     return 0;
@@ -110,32 +114,38 @@ static int seed_from_windows_cryptoapi(uint32_t *seed) {
     int ok;
 
     hAdvAPI32 = GetModuleHandle(TEXT("advapi32.dll"));
-    if (hAdvAPI32 == NULL)
+    if (hAdvAPI32 == NULL) {
         return 1;
+    }
 
     pCryptAcquireContext =
         (CRYPTACQUIRECONTEXTA)GetProcAddress(hAdvAPI32, "CryptAcquireContextA");
-    if (!pCryptAcquireContext)
+    if (!pCryptAcquireContext) {
         return 1;
+    }
 
     pCryptGenRandom = (CRYPTGENRANDOM)GetProcAddress(hAdvAPI32, "CryptGenRandom");
-    if (!pCryptGenRandom)
+    if (!pCryptGenRandom) {
         return 1;
+    }
 
     pCryptReleaseContext =
         (CRYPTRELEASECONTEXT)GetProcAddress(hAdvAPI32, "CryptReleaseContext");
-    if (!pCryptReleaseContext)
+    if (!pCryptReleaseContext) {
         return 1;
+    }
 
     if (!pCryptAcquireContext(&hCryptProv, NULL, NULL, PROV_RSA_FULL,
-                              CRYPT_VERIFYCONTEXT))
+                              CRYPT_VERIFYCONTEXT)) {
         return 1;
+    }
 
     ok = pCryptGenRandom(hCryptProv, sizeof(uint32_t), data);
     pCryptReleaseContext(hCryptProv, 0);
 
-    if (!ok)
+    if (!ok) {
         return 1;
+    }
 
     *seed = buf_to_uint32((char *)data);
     return 0;
@@ -169,13 +179,15 @@ static uint32_t generate_seed() {
     int done = 0;
 
 #if !defined(_WIN32) && defined(USE_URANDOM)
-    if (seed_from_urandom(&seed) == 0)
+    if (seed_from_urandom(&seed) == 0) {
         done = 1;
+    }
 #endif
 
 #if defined(_WIN32) && defined(USE_WINDOWS_CRYPTOAPI)
-    if (seed_from_windows_cryptoapi(&seed) == 0)
+    if (seed_from_windows_cryptoapi(&seed) == 0) {
         done = 1;
+    }
 #endif
 
     if (!done) {
@@ -185,8 +197,9 @@ static uint32_t generate_seed() {
     }
 
     /* Make sure the seed is never zero */
-    if (seed == 0)
+    if (seed == 0) {
         seed = 1;
+    }
 
     return seed;
 }
@@ -202,8 +215,9 @@ void json_object_seed(size_t seed) {
     if (hashtable_seed == 0) {
         if (__atomic_test_and_set(&seed_initialized, __ATOMIC_RELAXED) == 0) {
             /* Do the seeding ourselves */
-            if (new_seed == 0)
+            if (new_seed == 0) {
                 new_seed = generate_seed();
+            }
 
             __atomic_store_n(&hashtable_seed, new_seed, __ATOMIC_RELEASE);
         } else {
@@ -250,8 +264,9 @@ void json_object_seed(size_t seed) {
     if (hashtable_seed == 0) {
         if (InterlockedIncrement(&seed_initialized) == 1) {
             /* Do the seeding ourselves */
-            if (new_seed == 0)
+            if (new_seed == 0) {
                 new_seed = generate_seed();
+            }
 
             hashtable_seed = new_seed;
         } else {
@@ -268,8 +283,9 @@ void json_object_seed(size_t seed) {
     uint32_t new_seed = (uint32_t)seed;
 
     if (hashtable_seed == 0) {
-        if (new_seed == 0)
+        if (new_seed == 0) {
             new_seed = generate_seed();
+        }
 
         hashtable_seed = new_seed;
     }

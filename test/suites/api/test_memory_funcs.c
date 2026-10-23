@@ -48,13 +48,16 @@ static void test_simple() {
     json_get_alloc_funcs(&mfunc, &ffunc);
     create_and_free_complex_object();
 
-    if (malloc_called != 1 || free_called != 1 || mfunc != my_malloc || ffunc != my_free)
+    if (malloc_called != 1 || free_called != 1 || mfunc != my_malloc ||
+        ffunc != my_free) {
         fail("Custom allocation failed");
+    }
 }
 
 static void *oom_malloc(size_t size) {
-    if (malloc_used + size > 800)
+    if (malloc_used + size > 800) {
         return NULL;
+    }
 
     malloc_used += size;
     return malloc(size);
@@ -70,8 +73,9 @@ static void test_oom() {
     json_set_alloc_funcs(oom_malloc, oom_free);
     create_and_free_object_with_oom();
 
-    if (free_called == 0)
+    if (free_called == 0) {
         fail("Allocation with OOM failed");
+    }
 }
 
 /*
@@ -83,8 +87,9 @@ static void test_oom() {
 static void *secure_malloc(size_t size) {
     /* Store the memory area size in the beginning of the block */
     void *ptr = malloc(size + 8);
-    if (!ptr)
+    if (!ptr) {
         return NULL;
+    }
     *((size_t *)ptr) = size;
     return (char *)ptr + 8;
 }

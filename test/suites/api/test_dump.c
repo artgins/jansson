@@ -26,24 +26,29 @@ static int encode_null_callback(const char *buffer, size_t size, void *data) {
 }
 
 static void encode_null() {
-    if (json_dumps(NULL, JSON_ENCODE_ANY) != NULL)
+    if (json_dumps(NULL, JSON_ENCODE_ANY) != NULL) {
         fail("json_dumps didn't fail for NULL");
+    }
 
-    if (json_dumpb(NULL, NULL, 0, JSON_ENCODE_ANY) != 0)
+    if (json_dumpb(NULL, NULL, 0, JSON_ENCODE_ANY) != 0) {
         fail("json_dumpb didn't fail for NULL");
+    }
 
-    if (json_dumpf(NULL, stderr, JSON_ENCODE_ANY) != -1)
+    if (json_dumpf(NULL, stderr, JSON_ENCODE_ANY) != -1) {
         fail("json_dumpf didn't fail for NULL");
+    }
 
 #ifdef HAVE_UNISTD_H
-    if (json_dumpfd(NULL, STDERR_FILENO, JSON_ENCODE_ANY) != -1)
+    if (json_dumpfd(NULL, STDERR_FILENO, JSON_ENCODE_ANY) != -1) {
         fail("json_dumpfd didn't fail for NULL");
+    }
 #endif
 
     /* Don't test json_dump_file to avoid creating a file */
 
-    if (json_dump_callback(NULL, encode_null_callback, NULL, JSON_ENCODE_ANY) != -1)
+    if (json_dump_callback(NULL, encode_null_callback, NULL, JSON_ENCODE_ANY) != -1) {
         fail("json_dump_callback didn't fail for NULL");
+    }
 }
 
 static void encode_twice() {
@@ -54,28 +59,32 @@ static void encode_twice() {
 
     json = json_object();
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "{}"))
+    if (!result || strcmp(result, "{}")) {
         fail("json_dumps failed");
+    }
     free(result);
 
     json_object_set_new(json, "foo", json_integer(5));
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "{\"foo\": 5}"))
+    if (!result || strcmp(result, "{\"foo\": 5}")) {
         fail("json_dumps failed");
+    }
     free(result);
 
     json_decref(json);
 
     json = json_array();
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "[]"))
+    if (!result || strcmp(result, "[]")) {
         fail("json_dumps failed");
+    }
     free(result);
 
     json_array_append_new(json, json_integer(5));
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "[5]"))
+    if (!result || strcmp(result, "[5]")) {
         fail("json_dumps failed");
+    }
     free(result);
 
     json_decref(json);
@@ -99,14 +108,16 @@ static void circular_references() {
     json_object_set(json_object_get(json_object_get(json, "a"), "b"), "c",
                     json_object_get(json, "a"));
 
-    if (json_dumps(json, 0))
+    if (json_dumps(json, 0)) {
         fail("json_dumps encoded a circular reference!");
+    }
 
     json_object_del(json_object_get(json_object_get(json, "a"), "b"), "c");
 
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "{\"a\": {\"b\": {}}}"))
+    if (!result || strcmp(result, "{\"a\": {\"b\": {}}}")) {
         fail("json_dumps failed!");
+    }
     free(result);
 
     json_decref(json);
@@ -117,14 +128,16 @@ static void circular_references() {
     json_array_append(json_array_get(json_array_get(json, 0), 0),
                       json_array_get(json, 0));
 
-    if (json_dumps(json, 0))
+    if (json_dumps(json, 0)) {
         fail("json_dumps encoded a circular reference!");
+    }
 
     json_array_remove(json_array_get(json_array_get(json, 0), 0), 0);
 
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "[[[]]]"))
+    if (!result || strcmp(result, "[[[]]]")) {
         fail("json_dumps failed!");
+    }
     free(result);
 
     json_decref(json);
@@ -138,31 +151,39 @@ static void encode_other_than_array_or_object() {
     char *result;
 
     json = json_string("foo");
-    if (json_dumps(json, 0) != NULL)
+    if (json_dumps(json, 0) != NULL) {
         fail("json_dumps encoded a string!");
-    if (json_dumpf(json, NULL, 0) == 0)
+    }
+    if (json_dumpf(json, NULL, 0) == 0) {
         fail("json_dumpf encoded a string!");
-    if (json_dumpfd(json, -1, 0) == 0)
+    }
+    if (json_dumpfd(json, -1, 0) == 0) {
         fail("json_dumpfd encoded a string!");
+    }
 
     result = json_dumps(json, JSON_ENCODE_ANY);
-    if (!result || strcmp(result, "\"foo\"") != 0)
+    if (!result || strcmp(result, "\"foo\"") != 0) {
         fail("json_dumps failed to encode a string with JSON_ENCODE_ANY");
+    }
 
     free(result);
     json_decref(json);
 
     json = json_integer(42);
-    if (json_dumps(json, 0) != NULL)
+    if (json_dumps(json, 0) != NULL) {
         fail("json_dumps encoded an integer!");
-    if (json_dumpf(json, NULL, 0) == 0)
+    }
+    if (json_dumpf(json, NULL, 0) == 0) {
         fail("json_dumpf encoded an integer!");
-    if (json_dumpfd(json, -1, 0) == 0)
+    }
+    if (json_dumpfd(json, -1, 0) == 0) {
         fail("json_dumpfd encoded an integer!");
+    }
 
     result = json_dumps(json, JSON_ENCODE_ANY);
-    if (!result || strcmp(result, "42") != 0)
+    if (!result || strcmp(result, "42") != 0) {
         fail("json_dumps failed to encode an integer with JSON_ENCODE_ANY");
+    }
 
     free(result);
     json_decref(json);
@@ -178,15 +199,17 @@ static void escape_slashes() {
     json_object_set_new(json, "url", json_string("https://github.com/akheron/jansson"));
 
     result = json_dumps(json, 0);
-    if (!result || strcmp(result, "{\"url\": \"https://github.com/akheron/jansson\"}"))
+    if (!result || strcmp(result, "{\"url\": \"https://github.com/akheron/jansson\"}")) {
         fail("json_dumps failed to not escape slashes");
+    }
 
     free(result);
 
     result = json_dumps(json, JSON_ESCAPE_SLASH);
     if (!result ||
-        strcmp(result, "{\"url\": \"https:\\/\\/github.com\\/akheron\\/jansson\"}"))
+        strcmp(result, "{\"url\": \"https:\\/\\/github.com\\/akheron\\/jansson\"}")) {
         fail("json_dumps failed to escape slashes");
+    }
 
     free(result);
     json_decref(json);
@@ -198,8 +221,9 @@ static void encode_nul_byte() {
 
     json = json_stringn("nul byte \0 in string", 20);
     result = json_dumps(json, JSON_ENCODE_ANY);
-    if (!result || memcmp(result, "\"nul byte \\u0000 in string\"", 27))
+    if (!result || memcmp(result, "\"nul byte \\u0000 in string\"", 27)) {
         fail("json_dumps failed to dump an embedded NUL byte");
+    }
 
     free(result);
     json_decref(json);
@@ -210,13 +234,15 @@ static void dump_file() {
     int result;
 
     result = json_dump_file(NULL, "", 0);
-    if (result != -1)
+    if (result != -1) {
         fail("json_dump_file succeeded with invalid args");
+    }
 
     json = json_object();
     result = json_dump_file(json, "json_dump_file.json", 0);
-    if (result != 0)
+    if (result != 0) {
         fail("json_dump_file failed");
+    }
 
     json_decref(json);
     remove("json_dump_file.json");
@@ -230,15 +256,17 @@ static void dumpb() {
     obj = json_object();
 
     size = json_dumpb(obj, buf, sizeof(buf), 0);
-    if (size != 2 || strncmp(buf, "{}", 2))
+    if (size != 2 || strncmp(buf, "{}", 2)) {
         fail("json_dumpb failed");
+    }
 
     json_decref(obj);
     obj = json_pack("{s:s}", "foo", "bar");
 
     size = json_dumpb(obj, buf, sizeof(buf), JSON_COMPACT);
-    if (size != 13)
+    if (size != 13) {
         fail("json_dumpb size check failed");
+    }
 
     json_decref(obj);
 }
@@ -248,22 +276,26 @@ static void dumpfd() {
     int fds[2] = {-1, -1};
     json_t *a, *b;
 
-    if (pipe(fds))
+    if (pipe(fds)) {
         fail("pipe() failed");
+    }
 
     a = json_pack("{s:s}", "foo", "bar");
 
-    if (json_dumpfd(a, fds[1], 0))
+    if (json_dumpfd(a, fds[1], 0)) {
         fail("json_dumpfd() failed");
+    }
     close(fds[1]);
 
     b = json_loadfd(fds[0], 0, NULL);
-    if (!b)
+    if (!b) {
         fail("json_loadfd() failed");
+    }
     close(fds[0]);
 
-    if (!json_equal(a, b))
+    if (!json_equal(a, b)) {
         fail("json_equal() failed for fd test");
+    }
 
     json_decref(a);
     json_decref(b);
@@ -289,10 +321,12 @@ static void embed() {
         esize =
             json_dumpb(parse, embed, psize, JSON_COMPACT | JSON_SORT_KEYS | JSON_EMBED);
         json_decref(parse);
-        if (esize != psize)
+        if (esize != psize) {
             fail("json_dumpb(JSON_EMBED) returned an invalid size");
-        if (strncmp(plain + 1, embed, esize) != 0)
+        }
+        if (strncmp(plain + 1, embed, esize) != 0) {
             fail("json_dumps(JSON_EMBED) returned an invalid value");
+        }
         free(embed);
     }
 }
@@ -317,16 +351,18 @@ static void max_depth() {
     /* A structure nested exactly to the limit must still serialize. */
     json = build_nested_array(JSON_PARSER_MAX_DEPTH);
     result = json_dumps(json, 0);
-    if (!result)
+    if (!result) {
         fail("json_dumps failed for a structure within the depth limit");
+    }
     free(result);
     json_decref(json);
 
     /* A structure nested deeper than the limit must fail cleanly rather
        than overflow the stack. */
     json = build_nested_array(JSON_PARSER_MAX_DEPTH + 100);
-    if (json_dumps(json, 0) != NULL)
+    if (json_dumps(json, 0) != NULL) {
         fail("json_dumps didn't fail for a too deeply nested structure");
+    }
     json_decref(json);
 }
 

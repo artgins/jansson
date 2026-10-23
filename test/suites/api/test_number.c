@@ -19,15 +19,18 @@
 #endif
 static void test_inifity() {
     json_t *real = json_real(INFINITY);
-    if (real != NULL)
+    if (real != NULL) {
         fail("could construct a real from Inf");
+    }
 
     real = json_real(1.0);
-    if (json_real_set(real, INFINITY) != -1)
+    if (json_real_set(real, INFINITY) != -1) {
         fail("could set a real to Inf");
+    }
 
-    if (json_real_value(real) != 1.0)
+    if (json_real_value(real) != 1.0) {
         fail("real value changed unexpectedly");
+    }
 
     json_decref(real);
 #ifdef _MSC_VER
@@ -39,33 +42,44 @@ static void test_inifity() {
 static void test_bad_args(void) {
     json_t *txt = json_string("test");
 
-    if (json_integer_value(NULL) != 0)
+    if (json_integer_value(NULL) != 0) {
         fail("json_integer_value did not return 0 for non-integer");
-    if (json_integer_value(txt) != 0)
+    }
+    if (json_integer_value(txt) != 0) {
         fail("json_integer_value did not return 0 for non-integer");
+    }
 
-    if (!json_integer_set(NULL, 0))
+    if (!json_integer_set(NULL, 0)) {
         fail("json_integer_set did not return error for non-integer");
-    if (!json_integer_set(txt, 0))
+    }
+    if (!json_integer_set(txt, 0)) {
         fail("json_integer_set did not return error for non-integer");
+    }
 
-    if (json_real_value(NULL) != 0.0)
+    if (json_real_value(NULL) != 0.0) {
         fail("json_real_value did not return 0.0 for non-real");
-    if (json_real_value(txt) != 0.0)
+    }
+    if (json_real_value(txt) != 0.0) {
         fail("json_real_value did not return 0.0 for non-real");
+    }
 
-    if (!json_real_set(NULL, 0.0))
+    if (!json_real_set(NULL, 0.0)) {
         fail("json_real_set did not return error for non-real");
-    if (!json_real_set(txt, 0.0))
+    }
+    if (!json_real_set(txt, 0.0)) {
         fail("json_real_set did not return error for non-real");
+    }
 
-    if (json_number_value(NULL) != 0.0)
+    if (json_number_value(NULL) != 0.0) {
         fail("json_number_value did not return 0.0 for non-numeric");
-    if (json_number_value(txt) != 0.0)
+    }
+    if (json_number_value(txt) != 0.0) {
         fail("json_number_value did not return 0.0 for non-numeric");
+    }
 
-    if (txt->refcount != 1)
+    if (txt->refcount != 1) {
         fail("unexpected reference count for txt");
+    }
 
     json_decref(txt);
 }
@@ -78,40 +92,49 @@ static void run_tests() {
     integer = json_integer(5);
     real = json_real(100.1);
 
-    if (!integer)
+    if (!integer) {
         fail("unable to create integer");
-    if (!real)
+    }
+    if (!real) {
         fail("unable to create real");
+    }
 
     i = json_integer_value(integer);
-    if (i != 5)
+    if (i != 5) {
         fail("wrong integer value");
+    }
 
     d = json_real_value(real);
-    if (d != 100.1)
+    if (d != 100.1) {
         fail("wrong real value");
+    }
 
     d = json_number_value(integer);
-    if (d != 5.0)
+    if (d != 5.0) {
         fail("wrong number value");
+    }
     d = json_number_value(real);
-    if (d != 100.1)
+    if (d != 100.1) {
         fail("wrong number value");
+    }
 
     json_decref(integer);
     json_decref(real);
 
 #ifdef NAN
     real = json_real(NAN);
-    if (real != NULL)
+    if (real != NULL) {
         fail("could construct a real from NaN");
+    }
 
     real = json_real(1.0);
-    if (json_real_set(real, NAN) != -1)
+    if (json_real_set(real, NAN) != -1) {
         fail("could set a real to NaN");
+    }
 
-    if (json_real_value(real) != 1.0)
+    if (json_real_value(real) != 1.0) {
         fail("real value changed unexpectedly");
+    }
 
     json_decref(real);
 #endif

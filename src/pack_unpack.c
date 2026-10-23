@@ -65,8 +65,9 @@ static void next_token(scanner_t *s) {
         return;
     }
 
-    if (!token(s) && !*s->fmt)
+    if (!token(s) && !*s->fmt) {
         return;
+    }
 
     t = s->fmt;
     s->column++;
@@ -77,8 +78,9 @@ static void next_token(scanner_t *s) {
         if (*t == '\n') {
             s->line++;
             s->column = 1;
-        } else
+        } else {
             s->column++;
+        }
 
         s->pos++;
         t++;
@@ -89,8 +91,9 @@ static void next_token(scanner_t *s) {
     s->token.column = s->column;
     s->token.pos = s->pos;
 
-    if (*t)
+    if (*t) {
         t++;
+    }
     s->fmt = t;
 }
 
@@ -251,8 +254,9 @@ static json_t *pack_object(scanner_t *s, va_list *ap) {
 
         value = pack(s, ap);
         if (!value) {
-            if (ours)
+            if (ours) {
                 jsonp_free(key);
+            }
 
             if (valueOptional != '*') {
                 set_error(s, "<args>", json_error_null_value, "NULL object value");
@@ -263,8 +267,9 @@ static json_t *pack_object(scanner_t *s, va_list *ap) {
             continue;
         }
 
-        if (s->has_error)
+        if (s->has_error) {
             json_decref(value);
+        }
 
         if (!s->has_error && json_object_setn_new_nocheck(object, key, len, value)) {
             set_error(s, "<internal>", json_error_out_of_memory,
@@ -272,14 +277,16 @@ static json_t *pack_object(scanner_t *s, va_list *ap) {
             s->has_error = 1;
         }
 
-        if (ours)
+        if (ours) {
             jsonp_free(key);
+        }
 
         next_token(s);
     }
 
-    if (!s->has_error)
+    if (!s->has_error) {
         return object;
+    }
 
 error:
     json_decref(object);
@@ -315,8 +322,9 @@ static json_t *pack_array(scanner_t *s, va_list *ap) {
             continue;
         }
 
-        if (s->has_error)
+        if (s->has_error) {
             json_decref(value);
+        }
 
         if (!s->has_error && json_array_append_new(array, value)) {
             set_error(s, "<internal>", json_error_out_of_memory,
@@ -327,8 +335,9 @@ static json_t *pack_array(scanner_t *s, va_list *ap) {
         next_token(s);
     }
 
-    if (!s->has_error)
+    if (!s->has_error) {
         return array;
+    }
 
 error:
     json_decref(array);
@@ -345,21 +354,24 @@ static json_t *pack_string(scanner_t *s, va_list *ap) {
     next_token(s);
     t = token(s);
     optional = t == '?' || t == '*';
-    if (!optional)
+    if (!optional) {
         prev_token(s);
+    }
 
     str = read_string(s, ap, "string", &len, &ours, optional);
 
-    if (!str)
+    if (!str) {
         return t == '?' && !s->has_error ? json_null() : NULL;
+    }
 
     if (s->has_error) {
         /* It's impossible to reach this point if ours != 0, do not free str. */
         return NULL;
     }
 
-    if (ours)
+    if (ours) {
         return jsonp_stringn_nocheck_own(str, len);
+    }
 
     return json_stringn_nocheck(str, len);
 }
@@ -371,13 +383,15 @@ static json_t *pack_object_inter(scanner_t *s, va_list *ap, int need_incref) {
     next_token(s);
     ntoken = token(s);
 
-    if (ntoken != '?' && ntoken != '*')
+    if (ntoken != '?' && ntoken != '*') {
         prev_token(s);
+    }
 
     json = va_arg(*ap, json_t *);
 
-    if (json)
+    if (json) {
         return need_incref ? json_incref(json) : json;
+    }
 
     switch (ntoken) {
         case '?':
@@ -553,15 +567,17 @@ static int unpack_object(scanner_t *s, json_t *root, va_list *ap,
             }
         }
 
-        if (unpack(s, value, ap, key))
+        if (unpack(s, value, ap, key)) {
             goto out;
+        }
 
         hashtable_set(&key_set, key, key_len, json_null());
         next_token(s);
     }
 
-    if (strict == 0 && (s->flags & JSON_STRICT))
+    if (strict == 0 && (s->flags & JSON_STRICT)) {
         strict = 1;
+    }
 
     if (root && strict == 1) {
         /* We need to check that all non optional items have been parsed */
@@ -585,9 +601,10 @@ static int unpack_object(scanner_t *s, json_t *root, va_list *ap,
                         keys_res = strbuffer_append_bytes(&unrecognized_keys, ", ", 2);
                     }
 
-                    if (!keys_res)
+                    if (!keys_res) {
                         keys_res =
                             strbuffer_append_bytes(&unrecognized_keys, key, key_len);
+                    }
                 }
             }
         }
@@ -659,15 +676,17 @@ static int unpack_array(scanner_t *s, json_t *root, va_list *ap, const char *par
             }
         }
 
-        if (unpack(s, value, ap, NULL))
+        if (unpack(s, value, ap, NULL)) {
             return -1;
+        }
 
         next_token(s);
         i++;
     }
 
-    if (strict == 0 && (s->flags & JSON_STRICT))
+    if (strict == 0 && (s->flags & JSON_STRICT)) {
         strict = 1;
+    }
 
     if (root && strict == 1 && i != json_array_size(root)) {
         long diff = (long)json_array_size(root) - (long)i;
@@ -714,13 +733,15 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
                                   "NULL string length argument");
                         return -1;
                     }
-                } else
+                } else {
                     prev_token(s);
+                }
 
                 if (root) {
                     *str_target = json_string_value(root);
-                    if (len_target)
+                    if (len_target) {
                         *len_target = json_string_length(root);
+                    }
                 }
             }
             return 0;
@@ -735,8 +756,9 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
 
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 int *target = va_arg(*ap, int *);
-                if (root)
+                if (root) {
                     *target = (int)json_integer_value(root);
+                }
             }
 
             return 0;
@@ -751,8 +773,9 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
 
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 json_int_t *target = va_arg(*ap, json_int_t *);
-                if (root)
+                if (root) {
                     *target = json_integer_value(root);
+                }
             }
 
             return 0;
@@ -767,8 +790,9 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
 
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 int *target = va_arg(*ap, int *);
-                if (root)
+                if (root) {
                     *target = json_is_true(root);
+                }
             }
 
             return 0;
@@ -783,8 +807,9 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
 
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 double *target = va_arg(*ap, double *);
-                if (root)
+                if (root) {
                     *target = json_real_value(root);
+                }
             }
 
             return 0;
@@ -799,22 +824,25 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap, const char *key) {
 
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 double *target = va_arg(*ap, double *);
-                if (root)
+                if (root) {
                     *target = json_number_value(root);
+                }
             }
 
             return 0;
 
         case 'O':
-            if (root && !(s->flags & JSON_VALIDATE_ONLY))
+            if (root && !(s->flags & JSON_VALIDATE_ONLY)) {
                 json_incref(root);
+            }
             /* Fall through */
 
         case 'o':
             if (!(s->flags & JSON_VALIDATE_ONLY)) {
                 json_t **target = va_arg(*ap, json_t **);
-                if (root)
+                if (root) {
                     *target = root;
+                }
             }
 
             return 0;
@@ -857,8 +885,9 @@ json_t *json_vpack_ex(json_error_t *error, size_t flags, const char *fmt, va_lis
     va_end(ap_copy);
 
     /* This will cover all situations where s.has_error is true */
-    if (!value)
+    if (!value) {
         return NULL;
+    }
 
     next_token(&s);
     if (token(&s)) {

@@ -23,8 +23,9 @@ int strbuffer_init(strbuffer_t *strbuff) {
     strbuff->length = 0;
 
     strbuff->value = jsonp_malloc(strbuff->size);
-    if (!strbuff->value)
+    if (!strbuff->value) {
         return -1;
+    }
 
     /* initialize to empty */
     strbuff->value[0] = '\0';
@@ -32,8 +33,9 @@ int strbuffer_init(strbuffer_t *strbuff) {
 }
 
 void strbuffer_close(strbuffer_t *strbuff) {
-    if (strbuff->value)
+    if (strbuff->value) {
         jsonp_free(strbuff->value);
+    }
 
     strbuff->size = 0;
     strbuff->length = 0;
@@ -56,14 +58,16 @@ int strbuffer_append_bytes(strbuffer_t *strbuff, const char *data, size_t size) 
         /* avoid integer overflow */
         if (strbuff->size > STRBUFFER_SIZE_MAX / STRBUFFER_FACTOR ||
             size > STRBUFFER_SIZE_MAX - 1 ||
-            strbuff->length > STRBUFFER_SIZE_MAX - 1 - size)
+            strbuff->length > STRBUFFER_SIZE_MAX - 1 - size) {
             return -1;
+        }
 
         new_size = max(strbuff->size * STRBUFFER_FACTOR, strbuff->length + size + 1);
 
         new_value = jsonp_realloc(strbuff->value, strbuff->size, new_size);
-        if (!new_value)
+        if (!new_value) {
             return -1;
+        }
 
         strbuff->value = new_value;
         strbuff->size = new_size;
@@ -81,6 +85,7 @@ char strbuffer_pop(strbuffer_t *strbuff) {
         char c = strbuff->value[--strbuff->length];
         strbuff->value[strbuff->length] = '\0';
         return c;
-    } else
+    } else {
         return '\0';
+    }
 }

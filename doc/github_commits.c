@@ -20,10 +20,11 @@
    text if there's no newline */
 static int newline_offset(const char *text) {
     const char *newline = strchr(text, '\n');
-    if (!newline)
+    if (!newline) {
         return strlen(text);
-    else
+    } else {
         return (int)(newline - text);
+    }
 }
 
 struct write_result {
@@ -54,12 +55,14 @@ static char *request(const char *url) {
 
     curl_global_init(CURL_GLOBAL_ALL);
     curl = curl_easy_init();
-    if (!curl)
+    if (!curl) {
         goto error;
+    }
 
     data = malloc(BUFFER_SIZE);
-    if (!data)
+    if (!data) {
         goto error;
+    }
 
     struct write_result write_result = {.data = data, .pos = 0};
 
@@ -95,12 +98,15 @@ static char *request(const char *url) {
     return data;
 
 error:
-    if (data)
+    if (data) {
         free(data);
-    if (curl)
+    }
+    if (curl) {
         curl_easy_cleanup(curl);
-    if (headers)
+    }
+    if (headers) {
         curl_slist_free_all(headers);
+    }
     curl_global_cleanup();
     return NULL;
 }
@@ -122,8 +128,9 @@ int main(int argc, char *argv[]) {
     snprintf(url, URL_SIZE, URL_FORMAT, argv[1], argv[2]);
 
     text = request(url);
-    if (!text)
+    if (!text) {
         return 1;
+    }
 
     root = json_loads(text, 0, &error);
     free(text);

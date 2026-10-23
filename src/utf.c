@@ -10,9 +10,9 @@
 #include <string.h>
 
 int utf8_encode(int32_t codepoint, char *buffer, size_t *size) {
-    if (codepoint < 0)
+    if (codepoint < 0) {
         return -1;
-    else if (codepoint < 0x80) {
+    } else if (codepoint < 0x80) {
         buffer[0] = (char)codepoint;
         *size = 1;
     } else if (codepoint < 0x800) {
@@ -30,8 +30,9 @@ int utf8_encode(int32_t codepoint, char *buffer, size_t *size) {
         buffer[2] = 0x80 + ((codepoint & 0x000FC0) >> 6);
         buffer[3] = 0x80 + ((codepoint & 0x00003F));
         *size = 4;
-    } else
+    } else {
         return -1;
+    }
 
     return 0;
 }
@@ -39,8 +40,9 @@ int utf8_encode(int32_t codepoint, char *buffer, size_t *size) {
 size_t utf8_check_first(char byte) {
     unsigned char u = (unsigned char)byte;
 
-    if (u < 0x80)
+    if (u < 0x80) {
         return 1;
+    }
 
     if (0x80 <= u && u <= 0xBF) {
         /* second, third or fourth byte of a multi-byte
@@ -78,8 +80,9 @@ size_t utf8_check_full(const char *buffer, size_t size, int32_t *codepoint) {
         value = u & 0xF;
     } else if (size == 4) {
         value = u & 0x7;
-    } else
+    } else {
         return 0;
+    }
 
     for (i = 1; i < size; i++) {
         u = (unsigned char)buffer[i];
@@ -108,8 +111,9 @@ size_t utf8_check_full(const char *buffer, size_t size, int32_t *codepoint) {
         return 0;
     }
 
-    if (codepoint)
+    if (codepoint) {
         *codepoint = value;
+    }
 
     return 1;
 }
@@ -118,22 +122,26 @@ const char *utf8_iterate(const char *buffer, size_t bufsize, int32_t *codepoint)
     size_t count;
     int32_t value;
 
-    if (!bufsize)
+    if (!bufsize) {
         return buffer;
-
-    count = utf8_check_first(buffer[0]);
-    if (count <= 0)
-        return NULL;
-
-    if (count == 1)
-        value = (unsigned char)buffer[0];
-    else {
-        if (count > bufsize || !utf8_check_full(buffer, count, &value))
-            return NULL;
     }
 
-    if (codepoint)
+    count = utf8_check_first(buffer[0]);
+    if (count <= 0) {
+        return NULL;
+    }
+
+    if (count == 1) {
+        value = (unsigned char)buffer[0];
+    } else {
+        if (count > bufsize || !utf8_check_full(buffer, count, &value)) {
+            return NULL;
+        }
+    }
+
+    if (codepoint) {
         *codepoint = value;
+    }
 
     return buffer + count;
 }
@@ -148,27 +156,32 @@ int utf8_check_string(const char *string, size_t length) {
         /* Eight bytes of ASCII at once: nothing to check in them */
         while (length - i >= 8) {
             memcpy(&word, string + i, 8);
-            if (word & UINT64_C(0x8080808080808080))
+            if (word & UINT64_C(0x8080808080808080)) {
                 break;
+            }
             i += 8;
         }
 
         /* ASCII a byte at a time: utf8_check_first() answers 1 for it,
            nothing more to check */
-        while (i < length && (unsigned char)string[i] < 0x80)
+        while (i < length && (unsigned char)string[i] < 0x80) {
             i++;
-        if (i == length)
+        }
+        if (i == length) {
             break;
+        }
 
         count = utf8_check_first(string[i]);
-        if (count == 0)
+        if (count == 0) {
             return 0;
-        else if (count > 1) {
-            if (count > length - i)
+        } else if (count > 1) {
+            if (count > length - i) {
                 return 0;
+            }
 
-            if (!utf8_check_full(&string[i], count, NULL))
+            if (!utf8_check_full(&string[i], count, NULL)) {
                 return 0;
+            }
         }
         i += count;
     }

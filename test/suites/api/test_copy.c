@@ -12,78 +12,97 @@
 static void test_copy_simple(void) {
     json_t *value, *copy;
 
-    if (json_copy(NULL))
+    if (json_copy(NULL)) {
         fail("copying NULL doesn't return NULL");
+    }
 
     /* true */
     value = json_true();
     copy = json_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("copying true failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* false */
     value = json_false();
     copy = json_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("copying false failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* null */
     value = json_null();
     copy = json_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("copying null failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* string */
     value = json_string("foo");
-    if (!value)
+    if (!value) {
         fail("unable to create a string");
+    }
     copy = json_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to copy a string");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("copying a string doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("copying a string produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* integer */
     value = json_integer(543);
-    if (!value)
+    if (!value) {
         fail("unable to create an integer");
+    }
     copy = json_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to copy an integer");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("copying an integer doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("copying an integer produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* real */
     value = json_real(123e9);
-    if (!value)
+    if (!value) {
         fail("unable to create a real");
+    }
     copy = json_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to copy a real");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("copying a real doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("copying a real produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 }
@@ -91,78 +110,97 @@ static void test_copy_simple(void) {
 static void test_deep_copy_simple(void) {
     json_t *value, *copy;
 
-    if (json_deep_copy(NULL))
+    if (json_deep_copy(NULL)) {
         fail("deep copying NULL doesn't return NULL");
+    }
 
     /* true */
     value = json_true();
     copy = json_deep_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("deep copying true failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* false */
     value = json_false();
     copy = json_deep_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("deep copying false failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* null */
     value = json_null();
     copy = json_deep_copy(value);
-    if (value != copy)
+    if (value != copy) {
         fail("deep copying null failed");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* string */
     value = json_string("foo");
-    if (!value)
+    if (!value) {
         fail("unable to create a string");
+    }
     copy = json_deep_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to deep copy a string");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("deep copying a string doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("deep copying a string produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* integer */
     value = json_integer(543);
-    if (!value)
+    if (!value) {
         fail("unable to create an integer");
+    }
     copy = json_deep_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to deep copy an integer");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("deep copying an integer doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("deep copying an integer produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 
     /* real */
     value = json_real(123e9);
-    if (!value)
+    if (!value) {
         fail("unable to create a real");
+    }
     copy = json_deep_copy(value);
-    if (!copy)
+    if (!copy) {
         fail("unable to deep copy a real");
-    if (copy == value)
+    }
+    if (copy == value) {
         fail("deep copying a real doesn't copy");
-    if (!json_equal(copy, value))
+    }
+    if (!json_equal(copy, value)) {
         fail("deep copying a real produces an inequal copy");
-    if (value->refcount != 1 || copy->refcount != 1)
+    }
+    if (value->refcount != 1 || copy->refcount != 1) {
         fail("invalid refcounts");
+    }
     json_decref(value);
     json_decref(copy);
 }
@@ -174,20 +212,25 @@ static void test_copy_array(void) {
     size_t i;
 
     array = json_loads(json_array_text, 0, NULL);
-    if (!array)
+    if (!array) {
         fail("unable to parse an array");
+    }
 
     copy = json_copy(array);
-    if (!copy)
+    if (!copy) {
         fail("unable to copy an array");
-    if (copy == array)
+    }
+    if (copy == array) {
         fail("copying an array doesn't copy");
-    if (!json_equal(copy, array))
+    }
+    if (!json_equal(copy, array)) {
         fail("copying an array produces an inequal copy");
+    }
 
     for (i = 0; i < json_array_size(copy); i++) {
-        if (json_array_get(array, i) != json_array_get(copy, i))
+        if (json_array_get(array, i) != json_array_get(copy, i)) {
             fail("copying an array modifies its elements");
+        }
     }
 
     json_decref(array);
@@ -201,20 +244,25 @@ static void test_deep_copy_array(void) {
     size_t i;
 
     array = json_loads(json_array_text, 0, NULL);
-    if (!array)
+    if (!array) {
         fail("unable to parse an array");
+    }
 
     copy = json_deep_copy(array);
-    if (!copy)
+    if (!copy) {
         fail("unable to deep copy an array");
-    if (copy == array)
+    }
+    if (copy == array) {
         fail("deep copying an array doesn't copy");
-    if (!json_equal(copy, array))
+    }
+    if (!json_equal(copy, array)) {
         fail("deep copying an array produces an inequal copy");
+    }
 
     for (i = 0; i < json_array_size(copy); i++) {
-        if (json_array_get(array, i) == json_array_get(copy, i))
+        if (json_array_get(array, i) == json_array_get(copy, i)) {
             fail("deep copying an array doesn't copy its elements");
+        }
     }
 
     json_decref(array);
@@ -232,16 +280,20 @@ static void test_copy_object(void) {
     void *iter;
 
     object = json_loads(json_object_text, 0, NULL);
-    if (!object)
+    if (!object) {
         fail("unable to parse an object");
+    }
 
     copy = json_copy(object);
-    if (!copy)
+    if (!copy) {
         fail("unable to copy an object");
-    if (copy == object)
+    }
+    if (copy == object) {
         fail("copying an object doesn't copy");
-    if (!json_equal(copy, object))
+    }
+    if (!json_equal(copy, object)) {
         fail("copying an object produces an inequal copy");
+    }
 
     i = 0;
     iter = json_object_iter(object);
@@ -253,11 +305,13 @@ static void test_copy_object(void) {
         value1 = json_object_iter_value(iter);
         value2 = json_object_get(copy, key);
 
-        if (value1 != value2)
+        if (value1 != value2) {
             fail("copying an object modifies its items");
+        }
 
-        if (strcmp(key, keys[i]) != 0)
+        if (strcmp(key, keys[i]) != 0) {
             fail("copying an object doesn't preserve key order");
+        }
 
         iter = json_object_iter_next(object, iter);
         i++;
@@ -278,16 +332,20 @@ static void test_deep_copy_object(void) {
     void *iter;
 
     object = json_loads(json_object_text, 0, NULL);
-    if (!object)
+    if (!object) {
         fail("unable to parse an object");
+    }
 
     copy = json_deep_copy(object);
-    if (!copy)
+    if (!copy) {
         fail("unable to deep copy an object");
-    if (copy == object)
+    }
+    if (copy == object) {
         fail("deep copying an object doesn't copy");
-    if (!json_equal(copy, object))
+    }
+    if (!json_equal(copy, object)) {
         fail("deep copying an object produces an inequal copy");
+    }
 
     i = 0;
     iter = json_object_iter(object);
@@ -299,11 +357,13 @@ static void test_deep_copy_object(void) {
         value1 = json_object_iter_value(iter);
         value2 = json_object_get(copy, key);
 
-        if (value1 == value2)
+        if (value1 == value2) {
             fail("deep copying an object doesn't copy its items");
+        }
 
-        if (strcmp(key, keys[i]) != 0)
+        if (strcmp(key, keys[i]) != 0) {
             fail("deep copying an object doesn't preserve key order");
+        }
 
         iter = json_object_iter_next(object, iter);
         i++;
@@ -332,14 +392,16 @@ static void test_deep_copy_circular_references(void) {
                     json_object_get(json, "a"));
 
     copy = json_deep_copy(json);
-    if (copy)
+    if (copy) {
         fail("json_deep_copy copied a circular reference!");
+    }
 
     json_object_del(json_object_get(json_object_get(json, "a"), "b"), "c");
 
     copy = json_deep_copy(json);
-    if (!copy)
+    if (!copy) {
         fail("json_deep_copy failed!");
+    }
 
     json_decref(copy);
     json_decref(json);
@@ -351,14 +413,16 @@ static void test_deep_copy_circular_references(void) {
                       json_array_get(json, 0));
 
     copy = json_deep_copy(json);
-    if (copy)
+    if (copy) {
         fail("json_deep_copy copied a circular reference!");
+    }
 
     json_array_remove(json_array_get(json_array_get(json, 0), 0), 0);
 
     copy = json_deep_copy(json);
-    if (!copy)
+    if (!copy) {
         fail("json_deep_copy failed!");
+    }
 
     json_decref(copy);
     json_decref(json);
@@ -377,8 +441,9 @@ static void test_deep_copy_max_depth(void) {
     }
 
     copy = json_deep_copy(json);
-    if (copy)
+    if (copy) {
         fail("json_deep_copy didn't fail for a too deeply nested structure!");
+    }
 
     json_decref(json);
 }

@@ -23,15 +23,17 @@ static json_realloc_t do_realloc = realloc;
 static json_free_t do_free = free;
 
 void *jsonp_malloc(size_t size) {
-    if (!size)
+    if (!size) {
         return NULL;
+    }
 
     return (*do_malloc)(size);
 }
 
 void jsonp_free(void *ptr) {
-    if (!ptr)
+    if (!ptr) {
         return;
+    }
 
     (*do_free)(ptr);
 }
@@ -39,13 +41,15 @@ void jsonp_free(void *ptr) {
 void *jsonp_realloc(void *ptr, size_t originalSize, size_t newSize) {
     void *newMemory;
 
-    if (do_realloc)
+    if (do_realloc) {
         return (*do_realloc)(ptr, newSize);
+    }
 
     // realloc emulation using malloc and free
     if (newSize == 0) {
-        if (ptr != NULL)
+        if (ptr != NULL) {
             (*do_free)(ptr);
+        }
 
         return NULL;
     } else {
@@ -65,8 +69,9 @@ char *jsonp_strndup(const char *str, size_t len) {
     char *new_str;
 
     new_str = jsonp_malloc(len + 1);
-    if (!new_str)
+    if (!new_str) {
         return NULL;
+    }
 
     memcpy(new_str, str, len);
     new_str[len] = '\0';
@@ -87,17 +92,22 @@ void json_set_alloc_funcs2(json_malloc_t malloc_fn, json_realloc_t realloc_fn,
 }
 
 void json_get_alloc_funcs(json_malloc_t *malloc_fn, json_free_t *free_fn) {
-    if (malloc_fn)
+    if (malloc_fn) {
         *malloc_fn = do_malloc;
-    if (free_fn)
+    }
+    if (free_fn) {
         *free_fn = do_free;
+    }
 }
 void json_get_alloc_funcs2(json_malloc_t *malloc_fn, json_realloc_t *realloc_fn,
                            json_free_t *free_fn) {
-    if (malloc_fn)
+    if (malloc_fn) {
         *malloc_fn = do_malloc;
-    if (realloc_fn)
+    }
+    if (realloc_fn) {
         *realloc_fn = do_realloc;
-    if (free_fn)
+    }
+    if (free_fn) {
         *free_fn = do_free;
+    }
 }

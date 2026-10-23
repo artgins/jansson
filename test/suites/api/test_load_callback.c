@@ -20,8 +20,9 @@ static const char my_str[] = "[\"A\", {\"B\": \"C\", \"e\": false}, 1, null, \"f
 
 static size_t greedy_reader(void *buf, size_t buflen, void *arg) {
     struct my_source *s = arg;
-    if (buflen > s->cap - s->off)
+    if (buflen > s->cap - s->off) {
         buflen = s->cap - s->off;
+    }
     if (buflen > 0) {
         memcpy(buf, s->buf + s->off, buflen);
         s->off += buflen;
@@ -42,8 +43,9 @@ static void run_tests() {
 
     json = json_load_callback(greedy_reader, &s, 0, &error);
 
-    if (!json)
+    if (!json) {
         fail("json_load_callback failed on a valid callback");
+    }
     json_decref(json);
 
     s.off = 0;

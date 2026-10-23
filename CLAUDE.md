@@ -35,13 +35,12 @@ conventions. This file only adds the jansson-specific layer on top.
   `src/jansson_private.h`). The portability layer upstream wrote stays: the
   atomics of `hashtable_seed.c`, the Windows paths, and `JANSSON_ATTRS` for
   warnings.
-- **Style.** The sources keep jansson's own style (the repo's
-  `.clang-format`, LLVM-based, with braces as upstream wrote them), so a
-  function reads like its neighbours and `git blame` stays useful. New
-  files, such as `test/differential/`, brace every block, as Yuneta does.
-  Whether the sources should take Yuneta's always-braces rule, in one
-  mechanical commit, is an open decision of the user. Run `clang-format`
-  on what you touch.
+- **Style: the repo's `.clang-format`, which braces every block** (Yuneta's
+  always-braces rule, `InsertBraces: true`, since 2026-10-23: one
+  mechanical commit that left the library byte-identical). Run
+  `scripts/clang-format` after a change; `scripts/clang-format-check` must
+  pass. `src/dtoa.c` is David Gay's, vendored, and stays as he wrote it
+  (`// clang-format off`).
 - **Single line on `master`.** Work in a clone of
   `github.com/artgins/jansson`. The checkout under
   `kernel/c/linux-ext-libs/build/jansson` in yunetas is a build copy at the

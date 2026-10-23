@@ -52,15 +52,18 @@ struct config {
 static const char *strip(char *str) {
     size_t length;
     char *result = str;
-    while (*result && l_isspace(*result))
+    while (*result && l_isspace(*result)) {
         result++;
+    }
 
     length = strlen(result);
-    if (length == 0)
+    if (length == 0) {
         return result;
+    }
 
-    while (l_isspace(result[length - 1]))
+    while (l_isspace(result[length - 1])) {
         result[--length] = '\0';
+    }
 
     return result;
 }
@@ -75,8 +78,9 @@ static char *loadfile(FILE *file) {
 
     buf = malloc(fsize + 1);
     ret = fread(buf, 1, fsize, file);
-    if (ret != fsize)
+    if (ret != fsize) {
         exit(1);
+    }
     buf[fsize] = '\0';
 
     return buf;
@@ -95,20 +99,27 @@ static void read_conf(FILE *conffile) {
         }
         *val++ = '\0';
 
-        if (!strcmp(line, "JSON_INDENT"))
+        if (!strcmp(line, "JSON_INDENT")) {
             conf.indent = atoi(val);
-        if (!strcmp(line, "JSON_COMPACT"))
+        }
+        if (!strcmp(line, "JSON_COMPACT")) {
             conf.compact = atoi(val);
-        if (!strcmp(line, "JSON_ENSURE_ASCII"))
+        }
+        if (!strcmp(line, "JSON_ENSURE_ASCII")) {
             conf.ensure_ascii = atoi(val);
-        if (!strcmp(line, "JSON_PRESERVE_ORDER"))
+        }
+        if (!strcmp(line, "JSON_PRESERVE_ORDER")) {
             conf.preserve_order = atoi(val);
-        if (!strcmp(line, "JSON_SORT_KEYS"))
+        }
+        if (!strcmp(line, "JSON_SORT_KEYS")) {
             conf.sort_keys = atoi(val);
-        if (!strcmp(line, "JSON_REAL_PRECISION"))
+        }
+        if (!strcmp(line, "JSON_REAL_PRECISION")) {
             conf.precision = atoi(val);
-        if (!strcmp(line, "STRIP"))
+        }
+        if (!strcmp(line, "STRIP")) {
             conf.strip = atoi(val);
+        }
         if (!strcmp(line, "HASHSEED")) {
             conf.have_hashseed = 1;
             conf.hashseed = atoi(val);
@@ -127,10 +138,11 @@ static int cmpfile(const char *str, const char *path, const char *fname) {
     file = fopen(filename, "rb");
     if (!file) {
         size_t len = strlen(filename);
-        if (conf.strip)
+        if (conf.strip) {
             strncat(filename, ".strip", sizeof(filename) - len - 1);
-        else
+        } else {
             strncat(filename, ".normal", sizeof(filename) - len - 1);
+        }
         file = fopen(filename, "rb");
     }
     if (!file) {
@@ -182,31 +194,38 @@ int use_conf(char *test_path) {
         fclose(infile);
         return 2;
     }
-    if (conf.indent)
+    if (conf.indent) {
         flags |= JSON_INDENT(conf.indent);
+    }
 
-    if (conf.compact)
+    if (conf.compact) {
         flags |= JSON_COMPACT;
+    }
 
-    if (conf.ensure_ascii)
+    if (conf.ensure_ascii) {
         flags |= JSON_ENSURE_ASCII;
+    }
 
-    if (conf.preserve_order)
+    if (conf.preserve_order) {
         flags |= JSON_PRESERVE_ORDER;
+    }
 
-    if (conf.sort_keys)
+    if (conf.sort_keys) {
         flags |= JSON_SORT_KEYS;
+    }
 
     if (conf.precision < 0 || conf.precision > 31) {
         fprintf(stderr, "invalid value for JSON_REAL_PRECISION: %d\n", conf.precision);
         fclose(infile);
         return 2;
     }
-    if (conf.precision)
+    if (conf.precision) {
         flags |= JSON_REAL_PRECISION(conf.precision);
+    }
 
-    if (conf.have_hashseed)
+    if (conf.have_hashseed) {
         json_object_seed(conf.hashseed);
+    }
 
     if (conf.strip) {
         /* Load to memory, strip leading and trailing whitespace */
@@ -248,10 +267,11 @@ int main(int argc, char *argv[]) {
     }
 
     for (i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--strip"))
+        if (!strcmp(argv[i], "--strip")) {
             conf.strip = 1;
-        else
+        } else {
             test_path = argv[i];
+        }
     }
 
     if (!test_path) {
