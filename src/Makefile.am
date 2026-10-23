@@ -12,7 +12,6 @@ libjansson_la_SOURCES = \
 	hashtable_seed.c \
 	jansson_private.h \
 	load.c \
-	lookup3.h \
 	memory.c \
 	pack_unpack.c \
 	strbuffer.c \

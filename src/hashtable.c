@@ -33,7 +33,7 @@ extern volatile uint32_t hashtable_seed;
 #define list_to_pair(list_)         container_of(list_, pair_t, list)
 #define ordered_list_to_pair(list_) container_of(list_, pair_t, ordered_list)
 
-/* The size and the mask of a table of 2^n buckets (were in lookup3.h) */
+/* The size and the mask of a table of 2^n buckets */
 #define hashsize(n) ((size_t)1 << (n))
 #define hashmask(n) (hashsize(n) - 1)
 
