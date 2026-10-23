@@ -139,11 +139,11 @@ const char *utf8_iterate(const char *buffer, size_t bufsize, int32_t *codepoint)
 }
 
 int utf8_check_string(const char *string, size_t length) {
-    size_t i;
+    size_t i = 0;
+    uint64_t word;
 
-    for (i = 0; i < length; i++) {
+    while (i < length) {
         size_t count;
-        uint64_t word;
 
         /* Eight bytes of ASCII at once: nothing to check in them */
         while (length - i >= 8) {
@@ -152,12 +152,13 @@ int utf8_check_string(const char *string, size_t length) {
                 break;
             i += 8;
         }
-        if (i >= length)
-            break;
 
-        /* ASCII: utf8_check_first() answers 1, nothing more to check */
-        if ((unsigned char)string[i] < 0x80)
-            continue;
+        /* ASCII a byte at a time: utf8_check_first() answers 1 for it,
+           nothing more to check */
+        while (i < length && (unsigned char)string[i] < 0x80)
+            i++;
+        if (i == length)
+            break;
 
         count = utf8_check_first(string[i]);
         if (count == 0)
@@ -168,9 +169,8 @@ int utf8_check_string(const char *string, size_t length) {
 
             if (!utf8_check_full(&string[i], count, NULL))
                 return 0;
-
-            i += count - 1;
         }
+        i += count;
     }
 
     return 1;

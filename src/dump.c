@@ -12,9 +12,9 @@
 #include "jansson_private.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -97,7 +97,7 @@ static int dump_indent(size_t flags, int depth, int space, json_dump_callback_t 
    '\\', nor '/' with JSON_ESCAPE_SLASH. Each test is exact (a byte that
    meets it is never missed); a word that fails one is read a byte at a
    time. */
-#define BYTES8(b) (UINT64_C(0x0101010101010101) * (b))
+#define BYTES8(b)        (UINT64_C(0x0101010101010101) * (b))
 #define HAS_ZERO_BYTE(v) (((v) - BYTES8(0x01)) & ~(v) & BYTES8(0x80))
 static JSON_INLINE int plain_ascii8(uint64_t w, size_t flags) {
     if (w & BYTES8(0x80))
@@ -127,41 +127,51 @@ static int dump_string(const char *str, size_t len, json_dump_callback_t dump, v
         int length;
 
         while (end < lim) {
-            if (lim - pos >= 8) {
-                uint64_t w;
+            const char *stop;
+            uint64_t w;
+
+            /* what the byte by byte loop does for eight such bytes */
+            while (lim - pos >= 8) {
                 memcpy(&w, pos, 8);
-                if (plain_ascii8(w, flags)) {
-                    /* what the byte by byte loop does for eight such bytes */
-                    pos += 8;
-                    end = pos;
-                    continue;
+                if (!plain_ascii8(w, flags))
+                    break;
+                pos += 8;
+            }
+            end = pos;
+            if (pos == lim)
+                break;
+
+            /* A byte at a time up to where a word can be read again: through
+               the bytes of the word that failed, or the last bytes */
+            stop = lim - pos >= 8 ? pos + 8 : lim;
+            do {
+                if ((unsigned char)*pos < 0x80) {
+                    /* ASCII: what utf8_iterate() answers for it */
+                    codepoint = (unsigned char)*pos;
+                    end = pos + 1;
+                } else {
+                    end = utf8_iterate(pos, lim - pos, &codepoint);
+                    if (!end)
+                        return -1;
                 }
-            }
-            if ((unsigned char)*pos < 0x80) {
-                /* ASCII: what utf8_iterate() answers for it */
-                codepoint = (unsigned char)*pos;
-                end = pos + 1;
-            } else {
-                end = utf8_iterate(pos, lim - pos, &codepoint);
-                if (!end)
-                    return -1;
-            }
 
-            /* mandatory escape or control char */
-            if (codepoint == '\\' || codepoint == '"' || codepoint < 0x20)
-                break;
+                /* mandatory escape or control char */
+                if (codepoint == '\\' || codepoint == '"' || codepoint < 0x20)
+                    goto run_end;
 
-            /* slash */
-            if ((flags & JSON_ESCAPE_SLASH) && codepoint == '/')
-                break;
+                /* slash */
+                if ((flags & JSON_ESCAPE_SLASH) && codepoint == '/')
+                    goto run_end;
 
-            /* non-ASCII */
-            if ((flags & JSON_ENSURE_ASCII) && codepoint > 0x7F)
-                break;
+                /* non-ASCII */
+                if ((flags & JSON_ENSURE_ASCII) && codepoint > 0x7F)
+                    goto run_end;
 
-            pos = end;
+                pos = end;
+            } while (pos < stop);
         }
 
+    run_end:
         if (pos != str) {
             if (dump(str, pos - str, data))
                 return -1;
