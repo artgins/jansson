@@ -38,7 +38,7 @@ static JSON_INLINE int isinf(double x) { return !isnan(x) && isnan(x - x); }
 #endif
 
 static int do_equal(const json_t *json1, const json_t *json2, int depth);
-json_t *do_deep_copy(const json_t *json, hashtable_t *parents, int depth);
+json_t *do_deep_copy(const json_t *json, loop_path_t *parents, int depth);
 
 static JSON_INLINE void json_init(json_t *json, json_type type) {
     json->type = type;
@@ -71,17 +71,50 @@ static size_t loop_key(char *key, size_t key_size, const json_t *json) {
     return 2 + n;
 }
 
-int jsonp_loop_check(hashtable_t *parents, const json_t *json, char *key, size_t key_size,
-                     size_t *key_len_out) {
-    size_t key_len = loop_key(key, key_size, json);
+void jsonp_loop_init(loop_path_t *path) {
+    path->depth = 0;
+    path->deep_init = 0;
+}
 
-    if (key_len_out)
-        *key_len_out = key_len;
+void jsonp_loop_close(loop_path_t *path) {
+    if (path->deep_init)
+        hashtable_close(&path->deep);
+}
 
-    if (hashtable_get(parents, key, key_len))
+int jsonp_loop_check(loop_path_t *path, const json_t *json) {
+    char key[LOOP_KEY_LEN];
+    size_t i, key_len;
+    size_t n = path->depth < LOOP_PATH_SHALLOW ? path->depth : LOOP_PATH_SHALLOW;
+
+    for (i = 0; i < n; i++) {
+        if (path->shallow[i] == json)
+            return -1;
+    }
+    if (path->depth < LOOP_PATH_SHALLOW) {
+        path->shallow[path->depth++] = json;
+        return 0;
+    }
+
+    if (!path->deep_init) {
+        if (hashtable_init(&path->deep))
+            return -1;
+        path->deep_init = 1;
+    }
+    key_len = loop_key(key, sizeof(key), json);
+    if (hashtable_get(&path->deep, key, key_len))
         return -1;
+    if (hashtable_set(&path->deep, key, key_len, json_null()))
+        return -1;
+    path->depth++;
+    return 0;
+}
 
-    return hashtable_set(parents, key, key_len, json_null());
+void jsonp_loop_leave(loop_path_t *path, const json_t *json) {
+    path->depth--;
+    if (path->depth >= LOOP_PATH_SHALLOW) {
+        char key[LOOP_KEY_LEN];
+        hashtable_del(&path->deep, key, loop_key(key, sizeof(key), json));
+    }
 }
 
 /*** object ***/
@@ -264,18 +297,16 @@ int json_object_update_missing(json_t *object, json_t *other) {
     return 0;
 }
 
-int do_object_update_recursive(json_t *object, json_t *other, hashtable_t *parents) {
+int do_object_update_recursive(json_t *object, json_t *other, loop_path_t *parents) {
     const char *key;
     size_t key_len;
     json_t *value;
-    char loop_key[LOOP_KEY_LEN];
     int res = 0;
-    size_t loop_key_len;
 
     if (!json_is_object(object) || !json_is_object(other))
         return -1;
 
-    if (jsonp_loop_check(parents, other, loop_key, sizeof(loop_key), &loop_key_len))
+    if (jsonp_loop_check(parents, other))
         return -1;
 
     json_object_keylen_foreach(other, key, key_len, value) {
@@ -294,19 +325,18 @@ int do_object_update_recursive(json_t *object, json_t *other, hashtable_t *paren
         }
     }
 
-    hashtable_del(parents, loop_key, loop_key_len);
+    jsonp_loop_leave(parents, other);
 
     return res;
 }
 
 int json_object_update_recursive(json_t *object, json_t *other) {
     int res;
-    hashtable_t parents_set;
+    loop_path_t parents_set;
 
-    if (hashtable_init(&parents_set))
-        return -1;
+    jsonp_loop_init(&parents_set);
     res = do_object_update_recursive(object, other, &parents_set);
-    hashtable_close(&parents_set);
+    jsonp_loop_close(&parents_set);
 
     return res;
 }
@@ -414,14 +444,12 @@ static json_t *json_object_copy(json_t *object) {
     return result;
 }
 
-static json_t *json_object_deep_copy(const json_t *object, hashtable_t *parents,
+static json_t *json_object_deep_copy(const json_t *object, loop_path_t *parents,
                                      int depth) {
     json_t *result;
     void *iter;
-    char loop_key[LOOP_KEY_LEN];
-    size_t loop_key_len;
 
-    if (jsonp_loop_check(parents, object, loop_key, sizeof(loop_key), &loop_key_len))
+    if (jsonp_loop_check(parents, object))
         return NULL;
 
     result = json_object();
@@ -449,7 +477,7 @@ static json_t *json_object_deep_copy(const json_t *object, hashtable_t *parents,
     }
 
 out:
-    hashtable_del(parents, loop_key, loop_key_len);
+    jsonp_loop_leave(parents, object);
 
     return result;
 }
@@ -700,14 +728,12 @@ static json_t *json_array_copy(json_t *array) {
     return result;
 }
 
-static json_t *json_array_deep_copy(const json_t *array, hashtable_t *parents,
+static json_t *json_array_deep_copy(const json_t *array, loop_path_t *parents,
                                     int depth) {
     json_t *result;
     size_t i;
-    char loop_key[LOOP_KEY_LEN];
-    size_t loop_key_len;
 
-    if (jsonp_loop_check(parents, array, loop_key, sizeof(loop_key), &loop_key_len))
+    if (jsonp_loop_check(parents, array))
         return NULL;
 
     result = json_array();
@@ -724,7 +750,7 @@ static json_t *json_array_deep_copy(const json_t *array, hashtable_t *parents,
     }
 
 out:
-    hashtable_del(parents, loop_key, loop_key_len);
+    jsonp_loop_leave(parents, array);
 
     return result;
 }
@@ -1136,17 +1162,16 @@ json_t *json_copy(json_t *json) {
 
 json_t *json_deep_copy(const json_t *json) {
     json_t *res;
-    hashtable_t parents_set;
+    loop_path_t parents_set;
 
-    if (hashtable_init(&parents_set))
-        return NULL;
+    jsonp_loop_init(&parents_set);
     res = do_deep_copy(json, &parents_set, 0);
-    hashtable_close(&parents_set);
+    jsonp_loop_close(&parents_set);
 
     return res;
 }
 
-json_t *do_deep_copy(const json_t *json, hashtable_t *parents, int depth) {
+json_t *do_deep_copy(const json_t *json, loop_path_t *parents, int depth) {
     if (!json)
         return NULL;
 

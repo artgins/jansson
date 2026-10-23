@@ -93,8 +93,26 @@ char *jsonp_strndup(const char *str, size_t len) JANSSON_ATTRS((warn_unused_resu
 /* Circular reference check*/
 /* Space for "0x", double the sizeof a pointer for the hex and a terminator. */
 #define LOOP_KEY_LEN (2 + (sizeof(json_t *) * 2) + 1)
-int jsonp_loop_check(hashtable_t *parents, const json_t *json, char *key, size_t key_size,
-                     size_t *key_len_out);
+
+/* The containers on the way from the root of a walk (a dump, a deep copy, a
+   recursive update) down to where it is: a container met again among them
+   is a cycle. The first LOOP_PATH_SHALLOW of them are kept in an array and
+   compared one by one; the deeper ones in a hashtable by their address,
+   made the first time a walk goes that deep. */
+#define LOOP_PATH_SHALLOW 32
+typedef struct {
+    const json_t *shallow[LOOP_PATH_SHALLOW];
+    size_t depth;
+    int deep_init;
+    hashtable_t deep;
+} loop_path_t;
+
+void jsonp_loop_init(loop_path_t *path);
+void jsonp_loop_close(loop_path_t *path);
+/* -1 when json is on the path (a cycle) or no memory; else json is added */
+int jsonp_loop_check(loop_path_t *path, const json_t *json);
+/* Take json, the last one added, off the path */
+void jsonp_loop_leave(loop_path_t *path, const json_t *json);
 
 /* Windows compatibility */
 #if defined(_WIN32) || defined(WIN32)
