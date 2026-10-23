@@ -89,6 +89,13 @@ typedef struct {
 
 #define stream_to_lex(stream) container_of(stream, lex_t, stream)
 
+/* TRUE when the string token can hold a NUL byte: only a \u0000 escape puts
+   one there, since the lexer refuses a control byte in a string, and a
+   string with escapes is the one decoded */
+static JSON_INLINE int lex_string_may_hold_nul(const lex_t *lex) {
+    return lex->value.string.val == lex->decoded;
+}
+
 /*** error reporting ***/
 
 static void error_set(json_error_t *error, const lex_t *lex, enum json_error_code code,
@@ -1017,7 +1024,7 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
 
         key = lex->value.string.val;
         len = lex->value.string.len;
-        if (memchr(key, '\0', len)) {
+        if (lex_string_may_hold_nul(lex) && memchr(key, '\0', len)) {
             error_set(error, lex, json_error_null_byte_in_key,
                       "NUL byte in object key not supported");
             goto error;
@@ -1139,7 +1146,7 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error) {
             size_t len = lex->value.string.len;
 
             if (!(flags & JSON_ALLOW_NUL)) {
-                if (memchr(value, '\0', len)) {
+                if (lex_string_may_hold_nul(lex) && memchr(value, '\0', len)) {
                     error_set(error, lex, json_error_null_character,
                               "\\u0000 is not allowed without JSON_ALLOW_NUL");
                     return NULL;
