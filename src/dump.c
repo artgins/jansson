@@ -66,6 +66,57 @@ static int dump_to_fd(const char *buffer, size_t size, void *data) {
     return -1;
 }
 
+/* The output of a dump is gathered here and handed to the callback of
+   json_dump_callback() when the next piece would not fit, and at the end:
+   a call per DUMP_BUFFER_SIZE bytes or so, where there was a call per
+   piece (a brace, a quote, a key, a separator, a run of a string). A piece
+   is never cut, so what the callback gets is still whole pieces, valid
+   UTF-8 as it is promised; a piece bigger than the buffer is handed over
+   alone. Once the callback fails, every later piece fails. */
+#define DUMP_BUFFER_SIZE 4096
+
+typedef struct {
+    json_dump_callback_t callback;
+    void *data;
+    size_t used;
+    int failed;
+    char buffer[DUMP_BUFFER_SIZE];
+} dump_buffer_t;
+
+static int dump_buffer_flush(dump_buffer_t *out) {
+    if (out->failed)
+        return -1;
+    if (out->used > 0) {
+        if (out->callback(out->buffer, out->used, out->data)) {
+            out->failed = 1;
+            return -1;
+        }
+        out->used = 0;
+    }
+    return 0;
+}
+
+static int dump_to_dump_buffer(const char *buffer, size_t size, void *data) {
+    dump_buffer_t *out = (dump_buffer_t *)data;
+
+    if (out->failed)
+        return -1;
+    if (size > DUMP_BUFFER_SIZE - out->used) {
+        if (dump_buffer_flush(out))
+            return -1;
+        if (size > DUMP_BUFFER_SIZE) {
+            if (out->callback(buffer, size, out->data)) {
+                out->failed = 1;
+                return -1;
+            }
+            return 0;
+        }
+    }
+    memcpy(out->buffer + out->used, buffer, size);
+    out->used += size;
+    return 0;
+}
+
 /* 32 spaces (the maximum indentation size) */
 static const char whitespace[] = "                                ";
 
@@ -523,15 +574,26 @@ int json_dump_callback(const json_t *json, json_dump_callback_t callback, void *
                        size_t flags) {
     int res;
     loop_path_t parents_set;
+    dump_buffer_t out;
 
     if (!(flags & JSON_ENCODE_ANY)) {
         if (!json_is_array(json) && !json_is_object(json))
             return -1;
     }
 
+    out.callback = callback;
+    out.data = data;
+    out.used = 0;
+    out.failed = 0;
+
     jsonp_loop_init(&parents_set);
-    res = do_dump(json, flags, 0, &parents_set, callback, data);
+    res = do_dump(json, flags, 0, &parents_set, dump_to_dump_buffer, &out);
     jsonp_loop_close(&parents_set);
+
+    /* What the dump wrote is handed over even when it failed afterwards, as
+       each piece was when it was written */
+    if (dump_buffer_flush(&out))
+        res = -1;
 
     return res;
 }
