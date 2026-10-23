@@ -314,25 +314,59 @@ typedef struct {
     size_t pos;
 } buffer_data_t;
 
+typedef struct {
+    const char *data;
+    size_t pos;
+} string_data_t;
+
 static int buffer_get(void *data);
+static int string_get(void *data);
 
-/* Save, from the buffer of json_loadb(), the run of plain ASCII that
-   follows in a string token: bytes 0x20..0x7F but '"' and '\\'. As
+/* What a source of json_loadb() or json_loads() has not handed the stream
+   yet, when the stream has nothing of its own cached (the rest of a
+   multi-byte character, a byte put back): its bytes, how many of them can
+   be read here (a string's end is its NUL, which no run takes), and where
+   its position is kept. NULL for any other source, or any other state. */
+static const char *stream_rest(stream_t *stream, size_t *available, size_t **pos) {
+    if (stream->state != STREAM_STATE_OK || stream->buffer[stream->buffer_pos] != '\0')
+        return NULL;
+
+    if (stream->get == buffer_get) {
+        buffer_data_t *bd = (buffer_data_t *)stream->data;
+        *available = bd->len - bd->pos;
+        *pos = &bd->pos;
+        return bd->data + bd->pos;
+    }
+    if (stream->get == string_get) {
+        string_data_t *sd = (string_data_t *)stream->data;
+        *available = (size_t)-1;
+        *pos = &sd->pos;
+        return sd->data + sd->pos;
+    }
+    return NULL;
+}
+
+/* The bytes a run takes: the plain ASCII of a string token (0x20..0x7F but
+   '"' and '\\'), or digits. None of them is a newline or a NUL. */
+#define RUN_STRING 0
+#define RUN_DIGITS 1
+
+/* Save the run of bytes of a kind that follows in the source, as
    lex_get_save() would save them one by one: the same bytes, the same
-   position and column (no newline in such a run). Only what fits in the
-   saved text as it is: it is never grown here, so that it grows where and
-   as the bytes saved one by one grow it (lex_get_save() of the byte that
-   finds it full), and a growth that fails, fails once, where it failed.
-   Nothing is done when the source is another one, or when the stream holds
-   the rest of a multi-byte character. */
-static void lex_save_ascii_run(lex_t *lex) {
+   position and column (a run has no newline). Only what fits in the saved
+   text as it is: it is never grown here, so that it grows where and as the
+   bytes saved one by one grow it (lex_get_save() of the byte that finds it
+   full), and a growth that fails, fails once, where it failed. Nothing is
+   done for a source other than json_loadb()'s and json_loads()'s, or when
+   the stream holds bytes of its own. */
+static void lex_save_run(lex_t *lex, int kind) {
     stream_t *stream = &lex->stream;
-    buffer_data_t *bd;
     strbuffer_t *sb = &lex->saved_text;
-    size_t start, end, room, run;
+    const char *rest;
+    size_t available, *pos, room, run = 0;
 
-    if (stream->get != buffer_get || stream->state != STREAM_STATE_OK ||
-        stream->buffer[stream->buffer_pos] != '\0')
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest)
         return;
 
     /* strbuffer_append_bytes() grows it when a byte leaves no room for the
@@ -340,24 +374,49 @@ static void lex_save_ascii_run(lex_t *lex) {
     if (sb->size - sb->length <= 1)
         return;
     room = sb->size - sb->length - 1;
+    if (available > room)
+        available = room;
 
-    bd = (buffer_data_t *)stream->data;
-    start = end = bd->pos;
-    while (end < bd->len && end - start < room) {
-        unsigned char u = (unsigned char)bd->data[end];
-        if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
-            break;
-        end++;
+    if (kind == RUN_DIGITS) {
+        while (run < available && l_isdigit(rest[run]))
+            run++;
+    } else {
+        while (run < available) {
+            unsigned char u = (unsigned char)rest[run];
+            if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
+                break;
+            run++;
+        }
     }
-    run = end - start;
     if (run == 0)
         return;
 
-    memcpy(sb->value + sb->length, bd->data + start, run);
+    memcpy(sb->value + sb->length, rest, run);
     sb->length += run;
     sb->value[sb->length] = '\0';
 
-    bd->pos = end;
+    *pos += run;
+    stream->position += run;
+    stream->column += (int)run;
+}
+
+/* Skip the run of blanks (' ', '\t', '\r': not a newline) that follows in
+   the source, as lex_get() would read them one by one before a token: the
+   same position and column. Only for json_loadb()'s and json_loads()'s
+   sources, when the stream holds no bytes of its own. */
+static void lex_skip_blank_run(lex_t *lex) {
+    stream_t *stream = &lex->stream;
+    const char *rest;
+    size_t available, *pos, run = 0;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest)
+        return;
+    while (run < available &&
+           (rest[run] == ' ' || rest[run] == '\t' || rest[run] == '\r'))
+        run++;
+
+    *pos += run;
     stream->position += run;
     stream->column += (int)run;
 }
@@ -414,7 +473,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
                 goto out;
             }
         } else {
-            lex_save_ascii_run(lex);
+            lex_save_run(lex, RUN_STRING);
             c = lex_get_save(lex, error);
         }
     }
@@ -557,9 +616,10 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
     } else if (l_isdigit(c)) {
-        do
+        do {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        } while (l_isdigit(c));
     } else {
         lex_unget_unsave(lex, c);
         goto out;
@@ -602,9 +662,10 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
         if (lex_save(lex, c, error))
             goto out;
 
-        do
+        do {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        } while (l_isdigit(c));
     }
 
     if (c == 'E' || c == 'e') {
@@ -617,9 +678,10 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
 
-        do
+        do {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        } while (l_isdigit(c));
     }
 
     if (c == STREAM_STATE_ERROR)
@@ -648,9 +710,10 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
     if (lex->token == TOKEN_STRING)
         lex_free_string(lex);
 
-    do
+    do {
+        lex_skip_blank_run(lex);
         c = lex_get(lex, error);
-    while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+    } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
 
     if (c == STREAM_STATE_EOF) {
         lex->token = TOKEN_EOF;
@@ -979,11 +1042,6 @@ static json_t *parse_json(lex_t *lex, size_t flags, json_error_t *error) {
 
     return result;
 }
-
-typedef struct {
-    const char *data;
-    size_t pos;
-} string_data_t;
 
 static int string_get(void *data) {
     char c;
