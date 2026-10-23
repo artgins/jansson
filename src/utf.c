@@ -6,6 +6,7 @@
  */
 
 #include "utf.h"
+#include <stdint.h>
 #include <string.h>
 
 int utf8_encode(int32_t codepoint, char *buffer, size_t *size) {
@@ -142,6 +143,17 @@ int utf8_check_string(const char *string, size_t length) {
 
     for (i = 0; i < length; i++) {
         size_t count;
+        uint64_t word;
+
+        /* Eight bytes of ASCII at once: nothing to check in them */
+        while (length - i >= 8) {
+            memcpy(&word, string + i, 8);
+            if (word & UINT64_C(0x8080808080808080))
+                break;
+            i += 8;
+        }
+        if (i >= length)
+            break;
 
         /* ASCII: utf8_check_first() answers 1, nothing more to check */
         if ((unsigned char)string[i] < 0x80)
