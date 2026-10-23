@@ -30,12 +30,112 @@ typedef struct hashtable_bucket bucket_t;
 
 extern volatile uint32_t hashtable_seed;
 
-/* Implementation of the hash function */
-#include "lookup3.h"
-
 #define list_to_pair(list_)         container_of(list_, pair_t, list)
 #define ordered_list_to_pair(list_) container_of(list_, pair_t, ordered_list)
-#define hash_str(key, len)          ((size_t)hashlittle((key), len, hashtable_seed))
+
+/* The size and the mask of a table of 2^n buckets (were in lookup3.h) */
+#define hashsize(n) ((size_t)1 << (n))
+#define hashmask(n) (hashsize(n) - 1)
+
+/*
+ * The hash of a key.
+ *
+ * Words of 64 bits of the key, xored with the seed and with constants,
+ * multiplied 64x64 -> 128 and folded to 64 bits: the construction of
+ * wyhash (Wang Yi, public domain), the one Go's runtime uses for its maps
+ * where it has no AES. It replaces lookup3's hashlittle(), which hashed a
+ * key 32 bits at a time and was the most expensive function of a lookup.
+ *
+ * Nothing that jansson answers depends on the hash: an object is walked in
+ * the order its keys were inserted (ordered_list), never by its buckets.
+ * The hash is seeded with hashtable_seed, as before (json_object_seed()),
+ * so the buckets of a key are not known outside the process.
+ */
+#define HASH_P0 0xa0761d6478bd642fULL
+#define HASH_P1 0xe7037ed1a0b428dbULL
+#define HASH_P2 0x8ebc6af09c88c6e3ULL
+#define HASH_P3 0x589965cc75374cc3ULL
+
+/* The 128 bits of a * b: the low half in *a, the high half in *b */
+static JSON_INLINE void hash_mum(uint64_t *a, uint64_t *b) {
+#if defined(__SIZEOF_INT128__)
+    __uint128_t r = (__uint128_t)*a * *b;
+    *a = (uint64_t)r;
+    *b = (uint64_t)(r >> 64);
+#else
+    uint64_t ha = *a >> 32, hb = *b >> 32, la = (uint32_t)*a, lb = (uint32_t)*b;
+    uint64_t rh = ha * hb, rm0 = ha * lb, rm1 = hb * la, rl = la * lb;
+    uint64_t t = rl + (rm0 << 32), c = t < rl;
+    uint64_t lo = t + (rm1 << 32);
+    c += lo < t;
+    *a = lo;
+    *b = rh + (rm0 >> 32) + (rm1 >> 32) + c;
+#endif
+}
+
+static JSON_INLINE uint64_t hash_mix(uint64_t a, uint64_t b) {
+    hash_mum(&a, &b);
+    return a ^ b;
+}
+
+static JSON_INLINE uint64_t hash_r64(const unsigned char *p) {
+    uint64_t v;
+    memcpy(&v, p, 8);
+    return v;
+}
+
+static JSON_INLINE uint64_t hash_r32(const unsigned char *p) {
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+}
+
+static size_t hash_str(const void *key, size_t len) {
+    const unsigned char *p = (const unsigned char *)key;
+    uint64_t seed = hashtable_seed;
+    uint64_t a, b;
+
+    seed *= HASH_P0; /* the 32 bits of the seed spread over the 64 */
+    if (len <= 16) {
+        if (len >= 4) {
+            /* 4..16 bytes: four words of 32 bits, overlapping if need be */
+            size_t q = (len >> 3) << 2;
+            a = (hash_r32(p) << 32) | hash_r32(p + q);
+            b = (hash_r32(p + len - 4) << 32) | hash_r32(p + len - 4 - q);
+        } else if (len > 0) {
+            a = ((uint64_t)p[0] << 16) | ((uint64_t)p[len >> 1] << 8) | p[len - 1];
+            b = 0;
+        } else {
+            a = 0;
+            b = 0;
+        }
+    } else {
+        size_t i = len;
+        if (i > 48) {
+            uint64_t see1 = seed, see2 = seed;
+            do {
+                seed = hash_mix(hash_r64(p) ^ HASH_P1, hash_r64(p + 8) ^ seed);
+                see1 = hash_mix(hash_r64(p + 16) ^ HASH_P2, hash_r64(p + 24) ^ see1);
+                see2 = hash_mix(hash_r64(p + 32) ^ HASH_P3, hash_r64(p + 40) ^ see2);
+                p += 48;
+                i -= 48;
+            } while (i > 48);
+            seed ^= see1 ^ see2;
+        }
+        while (i > 16) {
+            seed = hash_mix(hash_r64(p) ^ HASH_P1, hash_r64(p + 8) ^ seed);
+            p += 16;
+            i -= 16;
+        }
+        /* the last 16 bytes of the key, overlapping what was hashed */
+        a = hash_r64(p + i - 16);
+        b = hash_r64(p + i - 8);
+    }
+    a ^= HASH_P1;
+    b ^= seed;
+    hash_mum(&a, &b);
+    return (size_t)hash_mix(a ^ HASH_P0 ^ len, b ^ HASH_P1);
+}
 
 static JSON_INLINE void list_init(list_t *list) {
     list->next = list;
