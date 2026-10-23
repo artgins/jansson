@@ -20,7 +20,10 @@ typedef struct {
 int strbuffer_init(strbuffer_t *strbuff) JANSSON_ATTRS((warn_unused_result));
 void strbuffer_close(strbuffer_t *strbuff);
 
-void strbuffer_clear(strbuffer_t *strbuff);
+static JSON_INLINE void strbuffer_clear(strbuffer_t *strbuff) {
+    strbuff->length = 0;
+    strbuff->value[0] = '\0';
+}
 
 const char *strbuffer_value(const strbuffer_t *strbuff);
 

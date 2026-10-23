@@ -15,6 +15,7 @@
 #endif
 #include "strbuffer.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #define container_of(ptr_, type_, member_)                                               \
     ((type_ *)((char *)ptr_ - offsetof(type_, member_)))
@@ -113,6 +114,24 @@ void jsonp_loop_close(loop_path_t *path);
 int jsonp_loop_check(loop_path_t *path, const json_t *json);
 /* Take json, the last one added, off the path */
 void jsonp_loop_leave(loop_path_t *path, const json_t *json);
+
+/* Eight bytes of a string at once, in a word read with memcpy(). Each test
+   is exact (a byte that meets it is never missed) and does not depend on
+   the byte order. */
+#define BYTES8(b)        (UINT64_C(0x0101010101010101) * (b))
+#define HAS_ZERO_BYTE(v) (((v) - BYTES8(0x01)) & ~(v) & BYTES8(0x80))
+
+/* TRUE when none of the eight bytes of w is special in a JSON string: all
+   of them are ASCII from 0x20 up, and none is '"' nor '\\' */
+static JSON_INLINE int jsonp_plain_ascii8(uint64_t w) {
+    if (w & BYTES8(0x80))
+        return 0;
+    if ((w - BYTES8(0x20)) & ~w & BYTES8(0x80)) /* a byte under 0x20 */
+        return 0;
+    if (HAS_ZERO_BYTE(w ^ BYTES8('"')) || HAS_ZERO_BYTE(w ^ BYTES8('\\')))
+        return 0;
+    return 1;
+}
 
 /* Windows compatibility */
 #if defined(_WIN32) || defined(WIN32)

@@ -405,6 +405,13 @@ static void lex_save_run(lex_t *lex, int kind) {
         while (run < available && l_isdigit(rest[run]))
             run++;
     } else {
+        while (available - run >= 8) {
+            uint64_t w;
+            memcpy(&w, rest + run, 8);
+            if (!jsonp_plain_ascii8(w))
+                break;
+            run += 8;
+        }
         while (run < available) {
             unsigned char u = (unsigned char)rest[run];
             if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
@@ -422,6 +429,44 @@ static void lex_save_run(lex_t *lex, int kind) {
     *pos += run;
     stream->position += run;
     stream->column += (int)run;
+}
+
+/* The closing quote of a string token, when it is the next byte of the
+   source and the stream holds no byte of its own: read and saved as
+   lex_get_save() reads and saves it (the byte in the stream's buffer, for
+   an unget; the position and the column one more), without its generic
+   path. 1 when it was, 0 when the next byte is not a quote that can be
+   read so, -1 when it could not be saved (and the lexer stops, as
+   lex_save() stops it). */
+static int lex_save_quote(lex_t *lex, json_error_t *error) {
+    stream_t *stream = &lex->stream;
+    const char *rest;
+    size_t available, *pos;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest || available == 0 || rest[0] != '"')
+        return 0;
+
+    (*pos)++;
+    stream->buffer[0] = '"';
+    stream->buffer[1] = '\0';
+    stream->buffer_pos = 1;
+    stream->position++;
+    stream->column++;
+    if (lex_save(lex, '"', error))
+        return -1;
+    return 1;
+}
+
+/* After a run of a string token: the byte that ended it, read and saved */
+static int lex_get_save_after_run(lex_t *lex, json_error_t *error) {
+    int quote = lex_save_quote(lex, error);
+
+    if (quote > 0)
+        return '"';
+    if (quote < 0)
+        return STREAM_STATE_ERROR;
+    return lex_get_save(lex, error);
 }
 
 /* Skip the run of blanks (' ', '\t', '\r': not a newline) that follows in
@@ -455,7 +500,11 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
     lex->value.string.val = NULL;
     lex->token = TOKEN_INVALID;
 
-    c = lex_get_save(lex, error);
+    /* The plain bytes after the opening quote are taken as a run, as the
+       loop below takes the plain bytes after the first one; most tokens
+       end there, at their closing quote */
+    lex_save_run(lex, RUN_STRING);
+    c = lex_get_save_after_run(lex, error);
 
     while (c != '"') {
         if (c == STREAM_STATE_ERROR)
@@ -500,7 +549,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
             }
         } else {
             lex_save_run(lex, RUN_STRING);
-            c = lex_get_save(lex, error);
+            c = lex_get_save_after_run(lex, error);
         }
     }
 
@@ -643,9 +692,52 @@ out:
 #endif
 #endif
 
-static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
+/* TRUE when the next byte of the source, with the stream holding no byte
+   of its own, ends an integer: plain ASCII that is not a digit, '.', 'e'
+   nor 'E'. The integer ends there without reading that byte, where
+   lex_get_save() and lex_unget_unsave() of it end it. A NUL, and anything
+   else, is left to them. */
+static int lex_integer_ends(lex_t *lex) {
+    const char *rest;
+    size_t available, *pos;
+    unsigned char u;
+
+    if (lex->flags & JSON_DECODE_INT_AS_REAL)
+        return 0;
+    rest = stream_rest(&lex->stream, &available, &pos);
+    if (!rest || available == 0)
+        return 0;
+    u = (unsigned char)rest[0];
+    return u != '\0' && u < 0x80 && !l_isdigit(u) && u != '.' && u != 'e' && u != 'E';
+}
+
+/* The integer of the saved text */
+static int lex_scan_integer(lex_t *lex, json_error_t *error) {
     const char *saved_text;
     char *end;
+    json_int_t intval;
+
+    saved_text = strbuffer_value(&lex->saved_text);
+
+    errno = 0;
+    intval = json_strtoint(saved_text, &end, 10);
+    if (errno == ERANGE) {
+        if (intval < 0)
+            error_set(error, lex, json_error_numeric_overflow,
+                      "too big negative integer");
+        else
+            error_set(error, lex, json_error_numeric_overflow, "too big integer");
+        return -1;
+    }
+
+    assert(end == saved_text + lex->saved_text.length);
+
+    lex->token = TOKEN_INTEGER;
+    lex->value.integer = intval;
+    return 0;
+}
+
+static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
     double doubleval;
 
     lex->token = TOKEN_INVALID;
@@ -660,6 +752,14 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
     } else if (l_isdigit(c)) {
+        /* The digits after the first are taken as a run, as the loop below
+           takes the digits after the second; most integers end there */
+        lex_save_run(lex, RUN_DIGITS);
+        if (lex_integer_ends(lex)) {
+            if (lex_scan_integer(lex, error))
+                goto out;
+            return 0;
+        }
         c = lex_get_save(lex, error);
         while (l_isdigit(c)) {
             lex_save_run(lex, RUN_DIGITS);
@@ -674,27 +774,9 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
         goto out;
 
     if (!(lex->flags & JSON_DECODE_INT_AS_REAL) && c != '.' && c != 'E' && c != 'e') {
-        json_int_t intval;
-
         lex_unget_unsave(lex, c);
-
-        saved_text = strbuffer_value(&lex->saved_text);
-
-        errno = 0;
-        intval = json_strtoint(saved_text, &end, 10);
-        if (errno == ERANGE) {
-            if (intval < 0)
-                error_set(error, lex, json_error_numeric_overflow,
-                          "too big negative integer");
-            else
-                error_set(error, lex, json_error_numeric_overflow, "too big integer");
+        if (lex_scan_integer(lex, error))
             goto out;
-        }
-
-        assert(end == saved_text + lex->saved_text.length);
-
-        lex->token = TOKEN_INTEGER;
-        lex->value.integer = intval;
         return 0;
     }
 

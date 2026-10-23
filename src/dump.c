@@ -144,18 +144,11 @@ static int dump_indent(size_t flags, int depth, int space, json_dump_callback_t 
 }
 
 /* TRUE when none of the eight bytes of w has to be escaped, nor read as
-   more than a byte: all of them are ASCII from 0x20 up, none is '"' nor
-   '\\', nor '/' with JSON_ESCAPE_SLASH. Each test is exact (a byte that
-   meets it is never missed); a word that fails one is read a byte at a
-   time. */
-#define BYTES8(b)        (UINT64_C(0x0101010101010101) * (b))
-#define HAS_ZERO_BYTE(v) (((v) - BYTES8(0x01)) & ~(v) & BYTES8(0x80))
+   more than a byte: all of them are plain in a string (jsonp_plain_ascii8())
+   and none is '/' with JSON_ESCAPE_SLASH. A word that fails is read a byte
+   at a time. */
 static JSON_INLINE int plain_ascii8(uint64_t w, size_t flags) {
-    if (w & BYTES8(0x80))
-        return 0;
-    if ((w - BYTES8(0x20)) & ~w & BYTES8(0x80)) /* a byte under 0x20 */
-        return 0;
-    if (HAS_ZERO_BYTE(w ^ BYTES8('"')) || HAS_ZERO_BYTE(w ^ BYTES8('\\')))
+    if (!jsonp_plain_ascii8(w))
         return 0;
     if ((flags & JSON_ESCAPE_SLASH) && HAS_ZERO_BYTE(w ^ BYTES8('/')))
         return 0;
