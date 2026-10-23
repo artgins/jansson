@@ -22,6 +22,12 @@ reference counting can be checked with the
 reference count manipulation is achieved using compiler built-in
 atomic functions, which are available in most modern compilers.
 
+A program with no threads gains nothing from atomic operations and pays
+for each one. Built with the CMake option
+``-DJANSSON_THREAD_SAFE_REFCOUNT=OFF``, Jansson counts references with
+plain increments and decrements, as without compiler support, and
+``JANSSON_THREAD_SAFE_REFCOUNT`` is not defined.
+
 If compiler support is not available (``JANSSON_THREAD_SAFE_REFCOUNT``
 is not defined), it may be very difficult to ensure thread safety of
 reference counting. It's possible to have a reference to a value
