@@ -319,24 +319,31 @@ static int buffer_get(void *data);
 /* Save, from the buffer of json_loadb(), the run of plain ASCII that
    follows in a string token: bytes 0x20..0x7F but '"' and '\\'. As
    lex_get_save() would save them one by one: the same bytes, the same
-   position and column (no newline in such a run), the saved text grown to
-   the same size by the same doublings. Nothing is done when the source is
-   another one, when the stream holds the rest of a multi-byte character, or
-   when the growth fails: the bytes are then read one by one, and a failure
-   comes where it came. */
+   position and column (no newline in such a run). Only what fits in the
+   saved text as it is: it is never grown here, so that it grows where and
+   as the bytes saved one by one grow it (lex_get_save() of the byte that
+   finds it full), and a growth that fails, fails once, where it failed.
+   Nothing is done when the source is another one, or when the stream holds
+   the rest of a multi-byte character. */
 static void lex_save_ascii_run(lex_t *lex) {
     stream_t *stream = &lex->stream;
     buffer_data_t *bd;
     strbuffer_t *sb = &lex->saved_text;
-    size_t start, end, run, need;
+    size_t start, end, room, run;
 
     if (stream->get != buffer_get || stream->state != STREAM_STATE_OK ||
         stream->buffer[stream->buffer_pos] != '\0')
         return;
 
+    /* strbuffer_append_bytes() grows it when a byte leaves no room for the
+       NUL: until then, size - length - 1 bytes are saved in place */
+    if (sb->size - sb->length <= 1)
+        return;
+    room = sb->size - sb->length - 1;
+
     bd = (buffer_data_t *)stream->data;
     start = end = bd->pos;
-    while (end < bd->len) {
+    while (end < bd->len && end - start < room) {
         unsigned char u = (unsigned char)bd->data[end];
         if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\')
             break;
@@ -346,21 +353,6 @@ static void lex_save_ascii_run(lex_t *lex) {
     if (run == 0)
         return;
 
-    need = sb->length + run + 1;
-    if (need > sb->size) {
-        size_t new_size = sb->size;
-        char *new_value;
-        while (new_size < need) {
-            if (new_size > ((size_t)-1) / 2)
-                return;
-            new_size *= 2;
-        }
-        new_value = jsonp_realloc(sb->value, sb->size, new_size);
-        if (!new_value)
-            return;
-        sb->value = new_value;
-        sb->size = new_size;
-    }
     memcpy(sb->value + sb->length, bd->data + start, run);
     sb->length += run;
     sb->value[sb->length] = '\0';
