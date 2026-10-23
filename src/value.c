@@ -731,12 +731,41 @@ out:
 
 /*** string ***/
 
+/* A string whose value fits, with its json_string_t and the NUL, in a block
+   of STRING_INLINE_SIZE bytes is made with one allocation: the value right
+   after the json_string_t. Any other value has an allocation of its own:
+   one handed over by its owner (jsonp_stringn_nocheck_own()), a longer
+   one, and every value given later by json_string_set(). */
+#define STRING_INLINE_SIZE 1024
+
+static JSON_INLINE char *string_inline_value(json_string_t *string) {
+    return (char *)(string + 1);
+}
+
+static void string_free_value(json_string_t *string) {
+    if (string->value != string_inline_value(string))
+        jsonp_free(string->value);
+}
+
 static json_t *string_create(const char *value, size_t len, int own) {
     char *v;
     json_string_t *string;
 
     if (!value)
         return NULL;
+
+    if (!own && len < STRING_INLINE_SIZE - sizeof(json_string_t)) {
+        string = jsonp_malloc(sizeof(json_string_t) + len + 1);
+        if (!string)
+            return NULL;
+        v = string_inline_value(string);
+        memcpy(v, value, len);
+        v[len] = '\0';
+        json_init(&string->json, JSON_STRING);
+        string->value = v;
+        string->length = len;
+        return &string->json;
+    }
 
     if (own)
         v = (char *)value;
@@ -821,7 +850,7 @@ int json_string_setn_nocheck(json_t *json, const char *value, size_t len) {
         return -1;
 
     string = json_to_string(json);
-    jsonp_free(string->value);
+    string_free_value(string);
     string->value = dup;
     string->length = len;
 
@@ -843,7 +872,7 @@ int json_string_setn(json_t *json, const char *value, size_t len) {
 }
 
 static void json_delete_string(json_string_t *string) {
-    jsonp_free(string->value);
+    string_free_value(string);
     jsonp_free(string);
 }
 
