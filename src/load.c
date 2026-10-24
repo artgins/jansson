@@ -68,12 +68,21 @@ typedef struct {
     /* A save of the token text failed (lex_save()): the stream is in the
        error state for that reason, and not for a byte it could not decode */
     int save_failed;
+    /* The value of a string token with escapes, decoded here: one buffer,
+       grown as needed, for all the tokens */
+    char *decoded;
+    size_t decoded_size;
+    /* The keys of the objects being parsed: each one is kept here, after
+       those of the objects around it, from its token until its value is
+       parsed */
+    strbuffer_t keys;
     size_t flags;
     size_t depth;
     int token;
     union {
         struct {
-            char *val;
+            /* In saved_text or in decoded: valid until the next token */
+            const char *val;
             size_t len;
         } string;
         json_int_t integer;
@@ -82,6 +91,12 @@ typedef struct {
 } lex_t;
 
 #define stream_to_lex(stream) container_of(stream, lex_t, stream)
+
+/* A value decoded from escapes this long, or longer, takes the lexer's
+   buffer (the string it would be copied into is an allocation of its own
+   anyway: value.c keeps only a shorter one in the block of its
+   json_string_t) */
+#define LEX_OWN_DECODED_MIN 1024
 
 /*** error reporting ***/
 
@@ -322,8 +337,7 @@ static void lex_save_cached(lex_t *lex, json_error_t *error) {
     }
 }
 
-static void lex_free_string(lex_t *lex) {
-    jsonp_free(lex->value.string.val);
+static void lex_clear_string(lex_t *lex) {
     lex->value.string.val = NULL;
     lex->value.string.len = 0;
 }
@@ -508,6 +522,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
     const char *p;
     char *t;
     int i;
+    int escaped = 0;
 
     lex->value.string.val = NULL;
     lex->token = TOKEN_INVALID;
@@ -540,6 +555,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
         }
 
         else if (c == '\\') {
+            escaped = 1;
             c = lex_get_save(lex, error);
             if (c == 'u') {
                 c = lex_get_save(lex, error);
@@ -571,13 +587,30 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
          - two \uXXXX escapes (length 12) forming an UTF-16 surrogate pair
            are converted to 4 bytes
     */
-    t = jsonp_malloc(lex->saved_text.length + 1);
-    if (!t) {
-        /* this is not very nice, since TOKEN_INVALID is returned */
-        error_set(error, lex, json_error_out_of_memory, "not enough memory");
-        goto out;
+    if (!escaped) {
+        /* Nothing to decode: the value is the saved text between its
+           quotes */
+        lex->value.string.val = strbuffer_value(&lex->saved_text) + 1;
+        lex->value.string.len = lex->saved_text.length - 2;
+        lex->token = TOKEN_STRING;
+        return;
     }
-    lex->value.string.val = t;
+
+    if (lex->decoded_size < lex->saved_text.length + 1) {
+        /* The size of the saved text: never a block larger than one the
+           lexer already has */
+        size_t size = lex->saved_text.length + 1;
+        t = jsonp_malloc(size);
+        if (!t) {
+            /* this is not very nice, since TOKEN_INVALID is returned */
+            error_set(error, lex, json_error_out_of_memory, "not enough memory");
+            goto out;
+        }
+        jsonp_free(lex->decoded);
+        lex->decoded = t;
+        lex->decoded_size = size;
+    }
+    t = lex->decoded;
 
     /* + 1 to skip the " */
     p = strbuffer_value(&lex->saved_text) + 1;
@@ -665,12 +698,13 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
             *(t++) = *(p++);
     }
     *t = '\0';
-    lex->value.string.len = t - lex->value.string.val;
+    lex->value.string.val = lex->decoded;
+    lex->value.string.len = t - lex->decoded;
     lex->token = TOKEN_STRING;
     return;
 
 out:
-    lex_free_string(lex);
+    lex_clear_string(lex);
 }
 
 #ifndef JANSSON_USING_CMAKE /* disabled if using cmake */
@@ -838,7 +872,7 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
     strbuffer_clear(&lex->saved_text);
 
     if (lex->token == TOKEN_STRING)
-        lex_free_string(lex);
+        lex_clear_string(lex);
 
     c = lex_get(lex, error);
     while (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
@@ -908,15 +942,11 @@ out:
     return lex->token;
 }
 
-static char *lex_steal_string(lex_t *lex, size_t *out_len) {
-    char *result = NULL;
-    if (lex->token == TOKEN_STRING) {
-        result = lex->value.string.val;
-        *out_len = lex->value.string.len;
-        lex->value.string.val = NULL;
-        lex->value.string.len = 0;
-    }
-    return result;
+/* Drop the keys saved from offset on: those of an object, and of all the
+   objects in it */
+static void lex_pop_keys(lex_t *lex, size_t offset) {
+    lex->keys.length = offset;
+    lex->keys.value[offset] = '\0';
 }
 
 static int lex_init(lex_t *lex, get_func get, size_t flags, void *data,
@@ -926,7 +956,13 @@ static int lex_init(lex_t *lex, get_func get, size_t flags, void *data,
         error_set(error, NULL, json_error_out_of_memory, "not enough memory");
         return -1;
     }
-
+    if (strbuffer_init(&lex->keys)) {
+        strbuffer_close(&lex->saved_text);
+        error_set(error, NULL, json_error_out_of_memory, "not enough memory");
+        return -1;
+    }
+    lex->decoded = NULL;
+    lex->decoded_size = 0;
     lex->save_failed = 0;
 
     lex->flags = flags;
@@ -936,8 +972,10 @@ static int lex_init(lex_t *lex, get_func get, size_t flags, void *data,
 
 static void lex_close(lex_t *lex) {
     if (lex->token == TOKEN_STRING)
-        lex_free_string(lex);
+        lex_clear_string(lex);
     strbuffer_close(&lex->saved_text);
+    strbuffer_close(&lex->keys);
+    jsonp_free(lex->decoded);
 }
 
 /*** parser ***/
@@ -956,8 +994,8 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
         return object;
 
     while (1) {
-        char *key;
-        size_t len;
+        const char *key;
+        size_t len, key_offset;
         json_t *value;
 
         if (lex->token != TOKEN_STRING) {
@@ -965,11 +1003,9 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
             goto error;
         }
 
-        key = lex_steal_string(lex, &len);
-        if (!key)
-            return NULL;
+        key = lex->value.string.val;
+        len = lex->value.string.len;
         if (memchr(key, '\0', len)) {
-            jsonp_free(key);
             error_set(error, lex, json_error_null_byte_in_key,
                       "NUL byte in object key not supported");
             goto error;
@@ -977,15 +1013,22 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
 
         if (flags & JSON_REJECT_DUPLICATES) {
             if (json_object_getn(object, key, len)) {
-                jsonp_free(key);
                 error_set(error, lex, json_error_duplicate_key, "duplicate object key");
                 goto error;
             }
         }
 
+        /* The key lives in the token until the next one: kept in lex->keys
+           while its value is parsed */
+        key_offset = lex->keys.length;
+        if (strbuffer_append_bytes(&lex->keys, key, len)) {
+            error_set(error, lex, json_error_out_of_memory, "not enough memory");
+            goto error;
+        }
+
         lex_scan(lex, error);
         if (lex->token != ':') {
-            jsonp_free(key);
+            lex_pop_keys(lex, key_offset);
             error_set(error, lex, json_error_invalid_syntax, "':' expected");
             goto error;
         }
@@ -993,17 +1036,18 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error) {
         lex_scan(lex, error);
         value = parse_value(lex, flags, error);
         if (!value) {
-            jsonp_free(key);
+            lex_pop_keys(lex, key_offset);
             goto error;
         }
 
-        if (json_object_setn_new_nocheck(object, key, len, value)) {
-            jsonp_free(key);
+        if (json_object_setn_new_nocheck(object, strbuffer_value(&lex->keys) + key_offset,
+                                         len, value)) {
+            lex_pop_keys(lex, key_offset);
             error_set(error, lex, json_error_out_of_memory, "not enough memory");
             goto error;
         }
 
-        jsonp_free(key);
+        lex_pop_keys(lex, key_offset);
 
         lex_scan(lex, error);
         if (lex->token != ',')
@@ -1086,9 +1130,17 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error) {
                 }
             }
 
-            json = jsonp_stringn_nocheck_own(value, len);
-            lex->value.string.val = NULL;
-            lex->value.string.len = 0;
+            if (value == lex->decoded && len >= LEX_OWN_DECODED_MIN) {
+                /* The value takes the buffer it was decoded into: no copy,
+                   and no second block of its size. The buffer is the
+                   string's now, also when that fails (it is freed). */
+                json = jsonp_stringn_nocheck_own(lex->decoded, len);
+                lex->decoded = NULL;
+                lex->decoded_size = 0;
+            } else {
+                json = json_stringn_nocheck(value, len);
+            }
+            lex_clear_string(lex);
             break;
         }
 
