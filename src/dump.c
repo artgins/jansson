@@ -66,28 +66,92 @@ static int dump_to_fd(const char *buffer, size_t size, void *data) {
     return -1;
 }
 
+/* The output of a dump is gathered here and handed to the callback of
+   json_dump_callback() when the next piece would not fit, and at the end:
+   a call per DUMP_BUFFER_SIZE bytes or so, where there was a call per
+   piece (a brace, a quote, a key, a separator, a run of a string). A piece
+   is never cut, so what the callback gets is still whole pieces, valid
+   UTF-8 as it is promised; a piece bigger than the buffer is handed over
+   alone. Once the callback fails, every later piece fails. */
+#define DUMP_BUFFER_SIZE 4096
+
+typedef struct {
+    json_dump_callback_t callback;
+    void *data;
+    size_t used;
+    int failed;
+    char buffer[DUMP_BUFFER_SIZE];
+} dump_buffer_t;
+
+static int dump_buffer_flush(dump_buffer_t *out) {
+    if (out->failed) {
+        return -1;
+    }
+    if (out->used > 0) {
+        if (out->callback(out->buffer, out->used, out->data)) {
+            out->failed = 1;
+            return -1;
+        }
+        out->used = 0;
+    }
+    return 0;
+}
+
+/* A piece that does not fit in what is left of the buffer: what the buffer
+   holds is handed to the callback first, and a piece bigger than the buffer
+   is handed over alone */
+static int dump_put_flushing(dump_buffer_t *out, const char *piece, size_t size) {
+    if (dump_buffer_flush(out)) {
+        return -1;
+    }
+    if (size > DUMP_BUFFER_SIZE) {
+        if (out->callback(piece, size, out->data)) {
+            out->failed = 1;
+            return -1;
+        }
+        return 0;
+    }
+    memcpy(out->buffer, piece, size);
+    out->used = size;
+    return 0;
+}
+
+/* A piece of the dump, copied into the buffer when it fits there */
+static JSON_INLINE int dump_put(dump_buffer_t *out, const char *piece, size_t size) {
+    if (out->failed) {
+        return -1;
+    }
+    if (size <= DUMP_BUFFER_SIZE - out->used) {
+        memcpy(out->buffer + out->used, piece, size);
+        out->used += size;
+        return 0;
+    }
+    return dump_put_flushing(out, piece, size);
+}
+
 /* 32 spaces (the maximum indentation size) */
 static const char whitespace[] = "                                ";
 
-static int dump_indent(size_t flags, int depth, int space, json_dump_callback_t dump,
-                       void *data) {
+static int dump_indent(size_t flags, int depth, int space, dump_buffer_t *out) {
     if (FLAGS_TO_INDENT(flags) > 0) {
         unsigned int ws_count = FLAGS_TO_INDENT(flags), n_spaces = depth * ws_count;
 
-        if (dump("\n", 1, data))
+        if (dump_put(out, "\n", 1)) {
             return -1;
+        }
 
         while (n_spaces > 0) {
             int cur_n =
                 n_spaces < sizeof whitespace - 1 ? n_spaces : sizeof whitespace - 1;
 
-            if (dump(whitespace, cur_n, data))
+            if (dump_put(out, whitespace, cur_n)) {
                 return -1;
+            }
 
             n_spaces -= cur_n;
         }
     } else if (space && !(flags & JSON_COMPACT)) {
-        return dump(" ", 1, data);
+        return dump_put(out, " ", 1);
     }
     return 0;
 }
@@ -106,22 +170,60 @@ static JSON_INLINE int plain_ascii8(uint64_t w, size_t flags) {
     return 1;
 }
 
-static int dump_string(const char *str, size_t len, json_dump_callback_t dump, void *data,
-                       size_t flags) {
+/* What a byte asks of dump_string(), the bits of byte_class[]: a byte with
+   none of the bits in use is written as it is */
+#define ESCAPED       1 /* '"', '\\' and the control bytes: always escaped */
+#define ESCAPED_SLASH 2 /* '/': escaped with JSON_ESCAPE_SLASH */
+#define NOT_ASCII     4 /* a byte of a UTF-8 sequence, read by utf8_iterate() */
+
+// clang-format off
+static const unsigned char byte_class[256] = {
+    /* 0x00 - 0x1f: the control bytes */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    /* 0x20 - 0x7f: '"' (0x22), '/' (0x2f) and '\\' (0x5c) */
+    0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* 0x80 - 0xff: the bytes of UTF-8 sequences */
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4
+};
+// clang-format on
+
+/* A string, quoted, its runs of plain bytes written whole and each
+   codepoint to escape written escaped. Fails (-1) on a piece that cannot be
+   written and on invalid UTF-8, where it stops: what was written before
+   stays written. */
+static int dump_string(const char *str, size_t len, dump_buffer_t *out, size_t flags) {
+    const unsigned char mask =
+        ESCAPED | NOT_ASCII | ((flags & JSON_ESCAPE_SLASH) ? ESCAPED_SLASH : 0);
     const char *pos, *end, *lim;
     int32_t codepoint = 0;
 
-    if (dump("\"", 1, data))
+    if (dump_put(out, "\"", 1)) {
         return -1;
+    }
 
-    end = pos = str;
+    pos = str;
     lim = str + len;
     while (1) {
         const char *text;
         char seq[13];
         int length;
 
-        while (end < lim) {
+        /* The run from str up to pos: up to the end of the string, or up to
+           a codepoint to escape, which ends at end */
+        while (pos < lim) {
             const char *stop;
             uint64_t w;
 
@@ -133,7 +235,6 @@ static int dump_string(const char *str, size_t len, json_dump_callback_t dump, v
                 }
                 pos += 8;
             }
-            end = pos;
             if (pos == lim) {
                 break;
             }
@@ -142,44 +243,43 @@ static int dump_string(const char *str, size_t len, json_dump_callback_t dump, v
                the bytes of the word that failed, or the last bytes */
             stop = lim - pos >= 8 ? pos + 8 : lim;
             do {
-                if ((unsigned char)*pos < 0x80) {
-                    /* ASCII: what utf8_iterate() answers for it */
-                    codepoint = (unsigned char)*pos;
+                unsigned char c = (unsigned char)*pos;
+
+                if (!(byte_class[c] & mask)) {
+                    pos++;
+                    continue;
+                }
+                if (c < 0x80) {
+                    /* '"', '\\', a control byte, or '/' with JSON_ESCAPE_SLASH */
+                    codepoint = c;
                     end = pos + 1;
-                } else {
-                    end = utf8_iterate(pos, lim - pos, &codepoint);
-                    if (!end) {
-                        return -1;
-                    }
+                    goto escape;
                 }
-
-                /* mandatory escape or control char */
-                if (codepoint == '\\' || codepoint == '"' || codepoint < 0x20) {
-                    goto run_end;
+                end = utf8_iterate(pos, lim - pos, &codepoint);
+                if (!end) {
+                    return -1;
                 }
-
-                /* slash */
-                if ((flags & JSON_ESCAPE_SLASH) && codepoint == '/') {
-                    goto run_end;
+                if (flags & JSON_ENSURE_ASCII) {
+                    goto escape;
                 }
-
-                /* non-ASCII */
-                if ((flags & JSON_ENSURE_ASCII) && codepoint > 0x7F) {
-                    goto run_end;
-                }
-
                 pos = end;
             } while (pos < stop);
         }
 
-    run_end:
+        /* The end of the string */
         if (pos != str) {
-            if (dump(str, pos - str, data))
+            if (dump_put(out, str, pos - str)) {
                 return -1;
+            }
         }
+        return dump_put(out, "\"", 1);
 
-        if (end == pos)
-            break;
+    escape:
+        if (pos != str) {
+            if (dump_put(out, str, pos - str)) {
+                return -1;
+            }
+        }
 
         /* handle \, /, ", and control codes */
         length = 2;
@@ -233,13 +333,12 @@ static int dump_string(const char *str, size_t len, json_dump_callback_t dump, v
             }
         }
 
-        if (dump(text, length, data))
+        if (dump_put(out, text, length)) {
             return -1;
+        }
 
         str = pos = end;
     }
-
-    return dump("\"", 1, data);
 }
 
 struct key_len {
@@ -260,7 +359,7 @@ static int compare_keys(const void *key1, const void *key2) {
 }
 
 static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *parents,
-                   json_dump_callback_t dump, void *data) {
+                   dump_buffer_t *out) {
     int embed = flags & JSON_EMBED;
 
     flags &= ~JSON_EMBED;
@@ -273,13 +372,13 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
 
     switch (json_typeof(json)) {
         case JSON_NULL:
-            return dump("null", 4, data);
+            return dump_put(out, "null", 4);
 
         case JSON_TRUE:
-            return dump("true", 4, data);
+            return dump_put(out, "true", 4);
 
         case JSON_FALSE:
-            return dump("false", 5, data);
+            return dump_put(out, "false", 5);
 
         case JSON_INTEGER: {
             char buffer[MAX_INTEGER_STR_LENGTH];
@@ -290,7 +389,7 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
             if (size < 0 || size >= MAX_INTEGER_STR_LENGTH)
                 return -1;
 
-            return dump(buffer, size, data);
+            return dump_put(out, buffer, size);
         }
 
         case JSON_REAL: {
@@ -303,12 +402,12 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
             if (size < 0)
                 return -1;
 
-            return dump(buffer, size, data);
+            return dump_put(out, buffer, size);
         }
 
         case JSON_STRING:
-            return dump_string(json_string_value(json), json_string_length(json), dump,
-                               data, flags);
+            return dump_string(json_string_value(json), json_string_length(json), out,
+                               flags);
 
         case JSON_ARRAY: {
             size_t n;
@@ -321,31 +420,36 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
 
             n = json_array_size(json);
 
-            if (!embed && dump("[", 1, data))
+            if (!embed && dump_put(out, "[", 1)) {
                 return -1;
+            }
             if (n == 0) {
                 jsonp_loop_leave(parents, json);
-                return embed ? 0 : dump("]", 1, data);
+                return embed ? 0 : dump_put(out, "]", 1);
             }
-            if (dump_indent(flags, depth + 1, 0, dump, data))
+            if (dump_indent(flags, depth + 1, 0, out)) {
                 return -1;
+            }
 
             for (i = 0; i < n - 1; ++i) {
-                if (do_dump(json_array_get(json, i), flags, depth + 1, parents, dump,
-                            data))
+                if (do_dump(json_array_get(json, i), flags, depth + 1, parents, out)) {
                     return -1;
+                }
 
-                if (dump(",", 1, data) || dump_indent(flags, depth + 1, 1, dump, data))
+                if (dump_put(out, ",", 1) || dump_indent(flags, depth + 1, 1, out)) {
                     return -1;
+                }
             }
 
-            if (do_dump(json_array_get(json, i), flags, depth + 1, parents, dump, data))
+            if (do_dump(json_array_get(json, i), flags, depth + 1, parents, out)) {
                 return -1;
-            if (dump_indent(flags, depth, 0, dump, data))
+            }
+            if (dump_indent(flags, depth, 0, out)) {
                 return -1;
+            }
 
             jsonp_loop_leave(parents, json);
-            return embed ? 0 : dump("]", 1, data);
+            return embed ? 0 : dump_put(out, "]", 1);
         }
 
         case JSON_OBJECT: {
@@ -366,16 +470,18 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
                 return -1;
             }
 
-            if (!embed && dump("{", 1, data))
+            if (!embed && dump_put(out, "{", 1)) {
                 return -1;
+            }
 
             iter = json_object_iter((json_t *)json);
             if (!iter) {
                 jsonp_loop_leave(parents, json);
-                return embed ? 0 : dump("}", 1, data);
+                return embed ? 0 : dump_put(out, "}", 1);
             }
-            if (dump_indent(flags, depth + 1, 0, dump, data))
+            if (dump_indent(flags, depth + 1, 0, out)) {
                 return -1;
+            }
 
             if (flags & JSON_SORT_KEYS) {
                 struct key_len *keys;
@@ -408,21 +514,21 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
                     value = json_object_getn(json, key->key, key->len);
                     assert(value);
 
-                    dump_string(key->key, key->len, dump, data, flags);
-                    if (dump(separator, separator_length, data) ||
-                        do_dump(value, flags, depth + 1, parents, dump, data)) {
+                    dump_string(key->key, key->len, out, flags);
+                    if (dump_put(out, separator, separator_length) ||
+                        do_dump(value, flags, depth + 1, parents, out)) {
                         jsonp_free(keys);
                         return -1;
                     }
 
                     if (i < size - 1) {
-                        if (dump(",", 1, data) ||
-                            dump_indent(flags, depth + 1, 1, dump, data)) {
+                        if (dump_put(out, ",", 1) ||
+                            dump_indent(flags, depth + 1, 1, out)) {
                             jsonp_free(keys);
                             return -1;
                         }
                     } else {
-                        if (dump_indent(flags, depth, 0, dump, data)) {
+                        if (dump_indent(flags, depth, 0, out)) {
                             jsonp_free(keys);
                             return -1;
                         }
@@ -438,19 +544,22 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
                     const char *key = json_object_iter_key(iter);
                     const size_t key_len = json_object_iter_key_len(iter);
 
-                    dump_string(key, key_len, dump, data, flags);
-                    if (dump(separator, separator_length, data) ||
+                    dump_string(key, key_len, out, flags);
+                    if (dump_put(out, separator, separator_length) ||
                         do_dump(json_object_iter_value(iter), flags, depth + 1, parents,
-                                dump, data))
+                                out)) {
                         return -1;
+                    }
 
                     if (next) {
-                        if (dump(",", 1, data) ||
-                            dump_indent(flags, depth + 1, 1, dump, data))
+                        if (dump_put(out, ",", 1) ||
+                            dump_indent(flags, depth + 1, 1, out)) {
                             return -1;
+                        }
                     } else {
-                        if (dump_indent(flags, depth, 0, dump, data))
+                        if (dump_indent(flags, depth, 0, out)) {
                             return -1;
+                        }
                     }
 
                     iter = next;
@@ -458,7 +567,7 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
             }
 
             jsonp_loop_leave(parents, json);
-            return embed ? 0 : dump("}", 1, data);
+            return embed ? 0 : dump_put(out, "}", 1);
         }
 
         default:
@@ -526,15 +635,27 @@ int json_dump_callback(const json_t *json, json_dump_callback_t callback, void *
                        size_t flags) {
     int res;
     loop_path_t parents_set;
+    dump_buffer_t out;
 
     if (!(flags & JSON_ENCODE_ANY)) {
         if (!json_is_array(json) && !json_is_object(json))
             return -1;
     }
 
+    out.callback = callback;
+    out.data = data;
+    out.used = 0;
+    out.failed = 0;
+
     jsonp_loop_init(&parents_set);
-    res = do_dump(json, flags, 0, &parents_set, callback, data);
+    res = do_dump(json, flags, 0, &parents_set, &out);
     jsonp_loop_close(&parents_set);
+
+    /* What the dump wrote is handed over even when it failed afterwards, as
+       each piece was when it was written */
+    if (dump_buffer_flush(&out)) {
+        res = -1;
+    }
 
     return res;
 }
