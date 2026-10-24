@@ -65,6 +65,9 @@ typedef struct {
 typedef struct {
     stream_t stream;
     strbuffer_t saved_text;
+    /* A save of the token text failed (lex_save()): the stream is in the
+       error state for that reason, and not for a byte it could not decode */
+    int save_failed;
     /* The value of a string token with escapes, decoded here: one buffer,
        grown as needed, for all the tokens */
     char *decoded;
@@ -296,6 +299,7 @@ static int lex_get(lex_t *lex, json_error_t *error) {
 static int lex_save(lex_t *lex, int c, json_error_t *error) {
     if (strbuffer_append_byte(&lex->saved_text, c)) {
         lex->stream.state = STREAM_STATE_ERROR;
+        lex->save_failed = 1;
         error_set(error, lex, json_error_out_of_memory, "not enough memory");
         return -1;
     }
@@ -813,8 +817,8 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
         goto out;
     }
 
-    if (c == STREAM_STATE_ERROR) {
-        goto out;
+    if (c == STREAM_STATE_ERROR && lex->save_failed) {
+        goto out; /* a byte of the token was lost */
     }
 
     if (!(lex->flags & JSON_DECODE_INT_AS_REAL) && c != '.' && c != 'E' && c != 'e') {
@@ -860,8 +864,8 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
         }
     }
 
-    if (c == STREAM_STATE_ERROR) {
-        goto out;
+    if (c == STREAM_STATE_ERROR && lex->save_failed) {
+        goto out; /* a byte of the token was lost */
     }
 
     lex_unget_unsave(lex, c);
@@ -930,8 +934,8 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
         do {
             c = lex_get_save(lex, error);
         } while (l_isalpha(c));
-        if (c == STREAM_STATE_ERROR) {
-            lex->token = TOKEN_INVALID;
+        if (c == STREAM_STATE_ERROR && lex->save_failed) {
+            lex->token = TOKEN_INVALID; /* a byte of the token was lost */
             goto out;
         }
         lex_unget_unsave(lex, c);
@@ -981,6 +985,7 @@ static int lex_init(lex_t *lex, get_func get, size_t flags, void *data,
     }
     lex->decoded = NULL;
     lex->decoded_size = 0;
+    lex->save_failed = 0;
 
     lex->flags = flags;
     lex->token = TOKEN_INVALID;
