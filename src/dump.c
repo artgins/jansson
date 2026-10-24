@@ -514,8 +514,8 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
                     value = json_object_getn(json, key->key, key->len);
                     assert(value);
 
-                    dump_string(key->key, key->len, out, flags);
-                    if (dump_put(out, separator, separator_length) ||
+                    if (dump_string(key->key, key->len, out, flags) ||
+                        dump_put(out, separator, separator_length) ||
                         do_dump(value, flags, depth + 1, parents, out)) {
                         jsonp_free(keys);
                         return -1;
@@ -544,8 +544,8 @@ static int do_dump(const json_t *json, size_t flags, int depth, loop_path_t *par
                     const char *key = json_object_iter_key(iter);
                     const size_t key_len = json_object_iter_key_len(iter);
 
-                    dump_string(key, key_len, out, flags);
-                    if (dump_put(out, separator, separator_length) ||
+                    if (dump_string(key, key_len, out, flags) ||
+                        dump_put(out, separator, separator_length) ||
                         do_dump(json_object_iter_value(iter), flags, depth + 1, parents,
                                 out)) {
                         return -1;

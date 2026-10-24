@@ -310,6 +310,25 @@ static json_t *build_nested_array(int depth) {
     return json;
 }
 
+static void key_not_dumped() {
+    json_t *json;
+    char *result;
+    size_t flags[] = {JSON_COMPACT, JSON_SORT_KEYS};
+    size_t i;
+
+    /* A key that is not valid UTF-8 (set with _nocheck) cannot be dumped:
+       the dump fails, it does not write a broken key */
+    for (i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
+        json = json_object();
+        json_object_set_new_nocheck(json, "a\xff", json_integer(1));
+        result = json_dumps(json, flags[i]);
+        if (result) {
+            fail("json_dumps didn't fail for a key that is not valid UTF-8");
+        }
+        json_decref(json);
+    }
+}
+
 static void max_depth() {
     json_t *json;
     char *result;
@@ -342,4 +361,5 @@ static void run_tests() {
     dumpfd();
     embed();
     max_depth();
+    key_not_dumped();
 }
