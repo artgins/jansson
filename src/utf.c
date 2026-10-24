@@ -6,6 +6,7 @@
  */
 
 #include "utf.h"
+#include <stdint.h>
 #include <string.h>
 
 int utf8_encode(int32_t codepoint, char *buffer, size_t *size) {
@@ -138,10 +139,31 @@ const char *utf8_iterate(const char *buffer, size_t bufsize, int32_t *codepoint)
 }
 
 int utf8_check_string(const char *string, size_t length) {
-    size_t i;
+    size_t i = 0;
+    uint64_t word;
 
-    for (i = 0; i < length; i++) {
-        size_t count = utf8_check_first(string[i]);
+    while (i < length) {
+        size_t count;
+
+        /* Eight bytes of ASCII at once: nothing to check in them */
+        while (length - i >= 8) {
+            memcpy(&word, string + i, 8);
+            if (word & UINT64_C(0x8080808080808080)) {
+                break;
+            }
+            i += 8;
+        }
+
+        /* ASCII a byte at a time: utf8_check_first() answers 1 for it,
+           nothing more to check */
+        while (i < length && (unsigned char)string[i] < 0x80) {
+            i++;
+        }
+        if (i == length) {
+            break;
+        }
+
+        count = utf8_check_first(string[i]);
         if (count == 0)
             return 0;
         else if (count > 1) {
@@ -150,9 +172,8 @@ int utf8_check_string(const char *string, size_t length) {
 
             if (!utf8_check_full(&string[i], count, NULL))
                 return 0;
-
-            i += count - 1;
         }
+        i += count;
     }
 
     return 1;
