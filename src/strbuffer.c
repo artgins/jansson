@@ -40,21 +40,12 @@ void strbuffer_close(strbuffer_t *strbuff) {
     strbuff->value = NULL;
 }
 
-void strbuffer_clear(strbuffer_t *strbuff) {
-    strbuff->length = 0;
-    strbuff->value[0] = '\0';
-}
-
 const char *strbuffer_value(const strbuffer_t *strbuff) { return strbuff->value; }
 
 char *strbuffer_steal_value(strbuffer_t *strbuff) {
     char *result = strbuff->value;
     strbuff->value = NULL;
     return result;
-}
-
-int strbuffer_append_byte(strbuffer_t *strbuff, char byte) {
-    return strbuffer_append_bytes(strbuff, &byte, 1);
 }
 
 int strbuffer_append_bytes(strbuffer_t *strbuff, const char *data, size_t size) {

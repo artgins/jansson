@@ -226,8 +226,45 @@ static void stream_unget(stream_t *stream, int c) {
     assert(stream->buffer[stream->buffer_pos] == c);
 }
 
+typedef struct {
+    const char *data;
+    size_t len;
+    size_t pos;
+} buffer_data_t;
+
+static int buffer_get(void *data);
+
+/* What stream_get() and the source of json_loads() or json_loadb() do for a
+   byte of plain ASCII that is not a newline nor a NUL, when the stream holds
+   no byte of its own: the byte is read from the source here, and the stream
+   left as stream_get() leaves it (the byte in its buffer, for an unget; the
+   position and the column one more). Anything else goes to stream_get(). */
+static JSON_INLINE int stream_get_fast(stream_t *stream, json_error_t *error) {
+    if (stream->state == STREAM_STATE_OK && stream->buffer[stream->buffer_pos] == '\0') {
+        if (stream->get == buffer_get) {
+            buffer_data_t *bd = (buffer_data_t *)stream->data;
+            unsigned char u;
+
+            if (bd->pos >= bd->len) {
+                return stream_get(stream, error);
+            }
+            u = (unsigned char)bd->data[bd->pos];
+            if (u != '\0' && u < 0x80 && u != '\n') {
+                bd->pos++;
+                stream->buffer[0] = (char)u;
+                stream->buffer[1] = '\0';
+                stream->buffer_pos = 1;
+                stream->position++;
+                stream->column++;
+                return u;
+            }
+        }
+    }
+    return stream_get(stream, error);
+}
+
 static int lex_get(lex_t *lex, json_error_t *error) {
-    return stream_get(&lex->stream, error);
+    return stream_get_fast(&lex->stream, error);
 }
 
 /* A failed save stops the lexer: the stream is put in the error state, so
@@ -246,7 +283,7 @@ static int lex_save(lex_t *lex, int c, json_error_t *error) {
 }
 
 static int lex_get_save(lex_t *lex, json_error_t *error) {
-    int c = stream_get(&lex->stream, error);
+    int c = stream_get_fast(&lex->stream, error);
     if (c != STREAM_STATE_EOF && c != STREAM_STATE_ERROR) {
         if (lex_save(lex, c, error)) {
             return STREAM_STATE_ERROR;
@@ -314,6 +351,158 @@ static int32_t decode_unicode_escape(const char *str) {
     return value;
 }
 
+/* What a source of json_loadb() or json_loads() has not handed the stream
+   yet, when the stream has nothing of its own cached (the rest of a
+   multi-byte character, a byte put back): its bytes, how many of them can
+   be read here, and where its position is kept. NULL for any other source,
+   or any other state. */
+static const char *stream_rest(stream_t *stream, size_t *available, size_t **pos) {
+    if (stream->state != STREAM_STATE_OK || stream->buffer[stream->buffer_pos] != '\0') {
+        return NULL;
+    }
+
+    if (stream->get == buffer_get) {
+        buffer_data_t *bd = (buffer_data_t *)stream->data;
+        *available = bd->len - bd->pos;
+        *pos = &bd->pos;
+        return bd->data + bd->pos;
+    }
+    return NULL;
+}
+
+/* The bytes a run takes: the plain ASCII of a string token (0x20..0x7F but
+   '"' and '\\'), or digits. None of them is a newline or a NUL. */
+#define RUN_STRING 0
+#define RUN_DIGITS 1
+
+/* Save the run of bytes of a kind that follows in the source, as
+   lex_get_save() would save them one by one: the same bytes, the same
+   position and column (a run has no newline). Only what fits in the saved
+   text as it is: it is never grown here, so that it grows where and as the
+   bytes saved one by one grow it (lex_get_save() of the byte that finds it
+   full), and a growth that fails, fails once, where it failed. Nothing is
+   done for a source other than json_loadb()'s and json_loads()'s, or when
+   the stream holds bytes of its own. */
+static void lex_save_run(lex_t *lex, int kind) {
+    stream_t *stream = &lex->stream;
+    strbuffer_t *sb = &lex->saved_text;
+    const char *rest;
+    size_t available, *pos, room, run = 0;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest) {
+        return;
+    }
+
+    /* strbuffer_append_bytes() grows it when a byte leaves no room for the
+       NUL: until then, size - length - 1 bytes are saved in place */
+    if (sb->size - sb->length <= 1) {
+        return;
+    }
+    room = sb->size - sb->length - 1;
+    if (available > room) {
+        available = room;
+    }
+
+    if (kind == RUN_DIGITS) {
+        while (run < available && l_isdigit(rest[run])) {
+            run++;
+        }
+    } else {
+        while (available - run >= 8) {
+            uint64_t w;
+            memcpy(&w, rest + run, 8);
+            if (!jsonp_plain_ascii8(w)) {
+                break;
+            }
+            run += 8;
+        }
+        while (run < available) {
+            unsigned char u = (unsigned char)rest[run];
+            if (u < 0x20 || u >= 0x80 || u == '"' || u == '\\') {
+                break;
+            }
+            run++;
+        }
+    }
+    if (run == 0) {
+        return;
+    }
+
+    memcpy(sb->value + sb->length, rest, run);
+    sb->length += run;
+    sb->value[sb->length] = '\0';
+
+    *pos += run;
+    stream->position += run;
+    stream->column += (int)run;
+}
+
+/* The closing quote of a string token, when it is the next byte of the
+   source and the stream holds no byte of its own: read and saved as
+   lex_get_save() reads and saves it (the byte in the stream's buffer, for
+   an unget; the position and the column one more), without its generic
+   path. 1 when it was, 0 when the next byte is not a quote that can be
+   read so, -1 when it could not be saved (and the lexer stops, as
+   lex_save() stops it). */
+static int lex_save_quote(lex_t *lex, json_error_t *error) {
+    stream_t *stream = &lex->stream;
+    const char *rest;
+    size_t available, *pos;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest || available == 0 || rest[0] != '"') {
+        return 0;
+    }
+
+    (*pos)++;
+    stream->buffer[0] = '"';
+    stream->buffer[1] = '\0';
+    stream->buffer_pos = 1;
+    stream->position++;
+    stream->column++;
+    if (lex_save(lex, '"', error)) {
+        return -1;
+    }
+    return 1;
+}
+
+/* After a run of a string token: the byte that ended it, read and saved */
+static int lex_get_save_after_run(lex_t *lex, json_error_t *error) {
+    int quote = lex_save_quote(lex, error);
+
+    if (quote > 0) {
+        return '"';
+    }
+    if (quote < 0) {
+        return STREAM_STATE_ERROR;
+    }
+    return lex_get_save(lex, error);
+}
+
+/* Skip the run of blanks (' ', '\t', '\r': not a newline) that follows in
+   the source, as lex_get() would read them one by one before a token: the
+   same position and column. Only for json_loadb()'s and json_loads()'s
+   sources, when the stream holds no bytes of its own. */
+static void lex_skip_blank_run(lex_t *lex) {
+    stream_t *stream = &lex->stream;
+    const char *rest;
+    size_t available, *pos, run = 0;
+
+    rest = stream_rest(stream, &available, &pos);
+    if (!rest) {
+        return;
+    }
+    while (run < available &&
+           (rest[run] == ' ' || rest[run] == '\t' || rest[run] == '\r')) {
+        run++;
+    }
+
+    *pos += run;
+    stream->position += run;
+    stream->column += (int)run;
+}
+
 static void lex_scan_string(lex_t *lex, json_error_t *error) {
     int c;
     const char *p;
@@ -323,7 +512,11 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
     lex->value.string.val = NULL;
     lex->token = TOKEN_INVALID;
 
-    c = lex_get_save(lex, error);
+    /* The plain bytes after the opening quote are taken as a run, as the
+       loop below takes the plain bytes after the first one; most tokens
+       end there, at their closing quote */
+    lex_save_run(lex, RUN_STRING);
+    c = lex_get_save_after_run(lex, error);
 
     while (c != '"') {
         if (c == STREAM_STATE_ERROR)
@@ -365,8 +558,10 @@ static void lex_scan_string(lex_t *lex, json_error_t *error) {
                 error_set(error, lex, json_error_invalid_syntax, "invalid escape");
                 goto out;
             }
-        } else
-            c = lex_get_save(lex, error);
+        } else {
+            lex_save_run(lex, RUN_STRING);
+            c = lex_get_save_after_run(lex, error);
+        }
     }
 
     /* the actual value is at most of the same length as the source
@@ -490,9 +685,55 @@ out:
 #endif
 #endif
 
-static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
+/* TRUE when the next byte of the source, with the stream holding no byte
+   of its own, ends an integer: plain ASCII that is not a digit, '.', 'e'
+   nor 'E'. The integer ends there without reading that byte, where
+   lex_get_save() and lex_unget_unsave() of it end it. A NUL, and anything
+   else, is left to them. */
+static int lex_integer_ends(lex_t *lex) {
+    const char *rest;
+    size_t available, *pos;
+    unsigned char u;
+
+    if (lex->flags & JSON_DECODE_INT_AS_REAL) {
+        return 0;
+    }
+    rest = stream_rest(&lex->stream, &available, &pos);
+    if (!rest || available == 0) {
+        return 0;
+    }
+    u = (unsigned char)rest[0];
+    return u != '\0' && u < 0x80 && !l_isdigit(u) && u != '.' && u != 'e' && u != 'E';
+}
+
+/* The integer of the saved text */
+static int lex_scan_integer(lex_t *lex, json_error_t *error) {
     const char *saved_text;
     char *end;
+    json_int_t intval;
+
+    saved_text = strbuffer_value(&lex->saved_text);
+
+    errno = 0;
+    intval = json_strtoint(saved_text, &end, 10);
+    if (errno == ERANGE) {
+        if (intval < 0) {
+            error_set(error, lex, json_error_numeric_overflow,
+                      "too big negative integer");
+        } else {
+            error_set(error, lex, json_error_numeric_overflow, "too big integer");
+        }
+        return -1;
+    }
+
+    assert(end == saved_text + lex->saved_text.length);
+
+    lex->token = TOKEN_INTEGER;
+    lex->value.integer = intval;
+    return 0;
+}
+
+static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
     double doubleval;
 
     lex->token = TOKEN_INVALID;
@@ -507,9 +748,20 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
     } else if (l_isdigit(c)) {
-        do
+        /* The digits after the first are taken as a run, as the loop below
+           takes the digits after the second; most integers end there */
+        lex_save_run(lex, RUN_DIGITS);
+        if (lex_integer_ends(lex)) {
+            if (lex_scan_integer(lex, error)) {
+                goto out;
+            }
+            return 0;
+        }
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     } else {
         lex_unget_unsave(lex, c);
         goto out;
@@ -520,27 +772,10 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
     }
 
     if (!(lex->flags & JSON_DECODE_INT_AS_REAL) && c != '.' && c != 'E' && c != 'e') {
-        json_int_t intval;
-
         lex_unget_unsave(lex, c);
-
-        saved_text = strbuffer_value(&lex->saved_text);
-
-        errno = 0;
-        intval = json_strtoint(saved_text, &end, 10);
-        if (errno == ERANGE) {
-            if (intval < 0)
-                error_set(error, lex, json_error_numeric_overflow,
-                          "too big negative integer");
-            else
-                error_set(error, lex, json_error_numeric_overflow, "too big integer");
+        if (lex_scan_integer(lex, error)) {
             goto out;
         }
-
-        assert(end == saved_text + lex->saved_text.length);
-
-        lex->token = TOKEN_INTEGER;
-        lex->value.integer = intval;
         return 0;
     }
 
@@ -554,9 +789,11 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
 
-        do
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     }
 
     if (c == 'E' || c == 'e') {
@@ -569,9 +806,11 @@ static int lex_scan_number(lex_t *lex, int c, json_error_t *error) {
             goto out;
         }
 
-        do
+        c = lex_get_save(lex, error);
+        while (l_isdigit(c)) {
+            lex_save_run(lex, RUN_DIGITS);
             c = lex_get_save(lex, error);
-        while (l_isdigit(c));
+        }
     }
 
     if (c == STREAM_STATE_ERROR && lex->save_failed) {
@@ -601,9 +840,11 @@ static int lex_scan(lex_t *lex, json_error_t *error) {
     if (lex->token == TOKEN_STRING)
         lex_free_string(lex);
 
-    do
+    c = lex_get(lex, error);
+    while (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+        lex_skip_blank_run(lex);
         c = lex_get(lex, error);
-    while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+    }
 
     if (c == STREAM_STATE_EOF) {
         lex->token = TOKEN_EOF;
@@ -935,27 +1176,10 @@ static json_t *parse_json(lex_t *lex, size_t flags, json_error_t *error) {
     return result;
 }
 
-typedef struct {
-    const char *data;
-    size_t pos;
-} string_data_t;
-
-static int string_get(void *data) {
-    char c;
-    string_data_t *stream = (string_data_t *)data;
-    c = stream->data[stream->pos];
-    if (c == '\0')
-        return EOF;
-    else {
-        stream->pos++;
-        return (unsigned char)c;
-    }
-}
-
 json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     lex_t lex;
     json_t *result;
-    string_data_t stream_data;
+    buffer_data_t stream_data;
 
     jsonp_error_init(error, "<string>");
 
@@ -964,10 +1188,13 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
         return NULL;
     }
 
+    /* The string up to its NUL, read as a buffer of that length: the end of
+       the buffer is where the NUL ended the string */
     stream_data.data = string;
     stream_data.pos = 0;
+    stream_data.len = strlen(string);
 
-    if (lex_init(&lex, string_get, flags, (void *)&stream_data, error)) {
+    if (lex_init(&lex, buffer_get, flags, (void *)&stream_data, error)) {
         return NULL;
     }
 
@@ -976,12 +1203,6 @@ json_t *json_loads(const char *string, size_t flags, json_error_t *error) {
     lex_close(&lex);
     return result;
 }
-
-typedef struct {
-    const char *data;
-    size_t len;
-    size_t pos;
-} buffer_data_t;
 
 static int buffer_get(void *data) {
     char c;
