@@ -30,12 +30,72 @@ typedef struct hashtable_bucket bucket_t;
 
 extern volatile uint32_t hashtable_seed;
 
-/* Implementation of the hash function */
-#include "lookup3.h"
-
 #define list_to_pair(list_)         container_of(list_, pair_t, list)
 #define ordered_list_to_pair(list_) container_of(list_, pair_t, ordered_list)
-#define hash_str(key, len)          ((size_t)hashlittle((key), len, hashtable_seed))
+
+/* The size and the mask of a table of 2^n buckets */
+#define hashsize(n) ((size_t)1 << (n))
+#define hashmask(n) (hashsize(n) - 1)
+
+/*
+ * The hash of a key.
+ *
+ * Words of 32 bits of the key, xored into a state of two words, which is
+ * mixed by multiplying one by the other, 32x32 -> 64 bits, and taking the
+ * two halves of the product as the new state: the construction of
+ * wyhash32 (Wang Yi, public domain). Standard C, the same on any compiler
+ * and any processor: the product of two 32-bit words in a 64-bit one is
+ * exact in C. It replaces lookup3's hashlittle(), which hashed a key 32
+ * bits at a time and was the most expensive function of a lookup.
+ *
+ * Nothing that jansson answers depends on the hash: an object is walked in
+ * the order its keys were inserted (ordered_list), never by its buckets.
+ * The hash is seeded with hashtable_seed, as before (json_object_seed()),
+ * so the buckets of a key are not known outside the process. The seed is
+ * mixed with the length before the first word of the key, so that no word
+ * of a key can turn the state into a known value without the seed.
+ */
+#define HASH_Q0 0x53c5ca59u
+#define HASH_Q1 0x74743c1bu
+
+static JSON_INLINE void hash_mix(uint32_t *a, uint32_t *b) {
+    uint64_t c = (uint64_t)(*a ^ HASH_Q0) * (uint64_t)(*b ^ HASH_Q1);
+    *a = (uint32_t)c;
+    *b = (uint32_t)(c >> 32);
+}
+
+static JSON_INLINE uint32_t hash_r32(const unsigned char *p) {
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+}
+
+static size_t hash_str(const void *key, size_t len) {
+    const unsigned char *p = (const unsigned char *)key;
+    size_t i = len;
+    uint32_t a = hashtable_seed ^ (uint32_t)((uint64_t)len >> 32);
+    uint32_t b = (uint32_t)len;
+
+    hash_mix(&a, &b);
+    while (i > 8) {
+        a ^= hash_r32(p);
+        b ^= hash_r32(p + 4);
+        hash_mix(&a, &b);
+        p += 8;
+        i -= 8;
+    }
+    if (i >= 4) {
+        /* 4..8 bytes: two words, overlapping if need be */
+        a ^= hash_r32(p);
+        b ^= hash_r32(p + i - 4);
+    } else if (i > 0) {
+        /* 1..3 bytes: the first, the middle and the last one */
+        a ^= ((uint32_t)p[0] << 16) | ((uint32_t)p[i >> 1] << 8) | p[i - 1];
+    }
+    hash_mix(&a, &b);
+    hash_mix(&a, &b);
+    return (size_t)(a ^ b);
+}
 
 static JSON_INLINE void list_init(list_t *list) {
     list->next = list;
