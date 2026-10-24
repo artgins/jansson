@@ -6,6 +6,7 @@ option(JANSSON_BUILD_SHARED_LIBS "Build shared libraries." OFF)
 option(USE_URANDOM "Use /dev/urandom to seed the hash function." ON)
 option(USE_WINDOWS_CRYPTOAPI "Use CryptGenRandom to seed the hash function." ON)
 option(USE_DTOA "Use dtoa for optimal floating-point to string conversions." ON)
+option(JANSSON_THREAD_SAFE_REFCOUNT "Count references with the compiler's atomic builtins, so that json values can be shared by threads. OFF: plain counts, for a program with no threads." ON)
 
 if (MSVC)
    # This option must match the settings used in your program, in particular if you
@@ -244,13 +245,16 @@ endif()
 check_c_source_compiles ("int main() { unsigned long val; __sync_bool_compare_and_swap(&val, 0, 1); __sync_add_and_fetch(&val, 1); __sync_sub_and_fetch(&val, 1); return 0; } " HAVE_SYNC_BUILTINS)
 check_c_source_compiles ("int main() { char l; unsigned long v; __atomic_test_and_set(&l, __ATOMIC_RELAXED); __atomic_store_n(&v, 1, __ATOMIC_RELEASE); __atomic_load_n(&v, __ATOMIC_ACQUIRE); __atomic_add_fetch(&v, 1, __ATOMIC_ACQUIRE); __atomic_sub_fetch(&v, 1, __ATOMIC_RELEASE); return 0; }" HAVE_ATOMIC_BUILTINS)
 
-if (HAVE_SYNC_BUILTINS)
+# The reference counts of jansson.h (JSON_INTERNAL_INCREF/DECREF): atomic
+# when the compiler has the builtins, unless JANSSON_THREAD_SAFE_REFCOUNT is
+# OFF. The seed of the hash (hashtable_seed.c) uses the builtins either way.
+if (HAVE_SYNC_BUILTINS AND JANSSON_THREAD_SAFE_REFCOUNT)
   set(JSON_HAVE_SYNC_BUILTINS 1)
 else()
   set(JSON_HAVE_SYNC_BUILTINS 0)
 endif()
 
-if (HAVE_ATOMIC_BUILTINS)
+if (HAVE_ATOMIC_BUILTINS AND JANSSON_THREAD_SAFE_REFCOUNT)
   set(JSON_HAVE_ATOMIC_BUILTINS 1)
 else()
   set(JSON_HAVE_ATOMIC_BUILTINS 0)
