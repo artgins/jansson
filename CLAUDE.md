@@ -82,5 +82,6 @@ Every change, before its commit:
 The ESP32 port has its own copy, in
 `kernel/c/root-esp32/components/esp_jansson/jansson` of yunetas. It is
 upstream 2.14 with the lexer fix applied by hand, and has none of the
-changes made for speed. Whether that copy should become this library is
-open.
+changes made for speed. It is not touched for now (the user, 2026-10-24):
+what making it this library needs is in yunetas' `TODO.md` and in
+`performance/audit/round-9-jansson-memory-websocket.md` there.
