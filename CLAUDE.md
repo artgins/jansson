@@ -19,24 +19,28 @@ file only adds the jansson-specific layer on top.
   of a treedb, every configuration. It is linked statically into every
   yuno, from `kernel/c/linux-ext-libs` of yunetas.
 - **It is upstream jansson (`akheron/jansson`) plus a series of Yuneta's
-  commits.** The series lives on a branch named after the upstream release
-  it sits on, `yuneta/<version>` (`yuneta/2.15.1` on tag `v2.15.1`), one
-  commit per logical change, linear. Each state yunetas pins is an
-  annotated tag `<version>-yuneta.<n>` (`2.15.1-yuneta.1`); `TAG_JANSSON`
-  in yunetas' `repos2clone.sh` names it.
+  commits.** The repo has ONE branch, `master`: the upstream release it
+  sits on (tag `v2.15.1` today) and the series on top of it, one commit per
+  logical change, linear. `master` is REWRITTEN (force-pushed) by every
+  rebase onto a new upstream release and by every fixup, so nobody builds
+  from it: each state yunetas pins is an annotated tag
+  `<version>-yuneta.<n>` (`2.15.1-yuneta.1`), which keeps that state for
+  good, and `TAG_JANSSON` in yunetas' `repos2clone.sh` names it. The series
+  of a release is `v<version>..<version>-yuneta.<n>`.
 - **Upstream is followed.** On each upstream release the series is rebased
   onto it:
 
   ```bash
   git fetch https://github.com/akheron/jansson.git tag v2.16.0
-  git checkout -b yuneta/2.16.0 yuneta/2.15.1
+  git checkout master
   git rebase --onto v2.16.0 v2.15.1
+  git push --force-with-lease origin master
   ```
 
   then validated (below) and tagged `2.16.0-yuneta.1`. A commit of the
   series that upstream now does is dropped in the rebase. Security fixes of
   upstream are always brought in: if one lands between releases, it is
-  cherry-picked onto the current branch and a new `-yuneta.<n>` is tagged.
+  cherry-picked onto `master` and a new `-yuneta.<n>` is tagged.
   A fix of the series that upstream would want is offered to upstream.
 - **The public API does not change.** `src/jansson.h`, contract in
   `doc/apiref.rst`: no function is added or removed, and none changes its
@@ -96,10 +100,11 @@ Every change, before its commit:
 
 ## Ship a change
 
-1. Commit on the current `yuneta/<version>` branch (a fixup of the commit
-   it belongs to, when it corrects one), in English: what changes, why, how
-   it was checked, and what a caller can see. Tag `<version>-yuneta.<n>`
-   and push the branch and the tag.
+1. Commit on `master` (a fixup of the commit it belongs to, when it
+   corrects one, and then `master` is force-pushed), in English: what
+   changes, why, how it was checked, and what a caller can see. Tag
+   `<version>-yuneta.<n>` (annotated, never moved) and push `master` and
+   the tag.
 2. In yunetas, `kernel/c/linux-ext-libs/`:
    - `repos2clone.sh`: `TAG_JANSSON` moves to the new tag;
    - `configure-libs.sh`: bump `VERSION`, with its entry in the header (the
